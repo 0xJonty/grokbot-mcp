@@ -32,6 +32,28 @@ Add this to `claude_desktop_config.json`:
 }
 ```
 
+## Agent install
+
+Paste this into your coding agent (Claude Code, Codex, Cursor, etc.) on the Windows machine and let it do the setup:
+
+```text
+Install the grokbot-mcp MCP server from https://github.com/0xJonty/grokbot-mcp for Claude Desktop on this Windows PC.
+
+1. Check prerequisites and stop with a clear message if any are missing:
+   - Windows, with Node.js 22+ on Windows (`node -v`; get its absolute path with `where node`).
+   - The Grok Bot desktop app is installed and signed in (the folder %APPDATA%\Grok Bot exists and contains sand-secrets.json).
+   - Claude Desktop is installed.
+2. Clone the repo to a working folder, then run `npm ci` and `npm run build`. This produces dist/grokbot-mcp.mjs.
+3. Copy dist/grokbot-mcp.mjs to %USERPROFILE%\grokbot-mcp\grokbot-mcp.mjs.
+4. Find claude_desktop_config.json. It is usually %APPDATA%\Claude\claude_desktop_config.json; if not, search under %LOCALAPPDATA% and %APPDATA%. Back it up, then MERGE (never overwrite other servers) this entry into "mcpServers":
+   "grokbot": { "command": "<absolute path to node.exe>", "args": ["<%USERPROFILE%>\\grokbot-mcp\\grokbot-mcp.mjs"] }
+   Use real absolute paths and keep the JSON valid.
+5. Run the read-only smoke test: set GROKBOT_MCP_BIN to the deployed file and run `node scripts/smoke.mjs`. It must list 8 tools and grokbot_status must report signedIn=true.
+6. Tell me to fully quit Claude Desktop (including the tray icon) and reopen it, then ask Claude to run grokbot_status.
+
+Rules: never print or log tokens or keys; do not call grokbot_create_bot, grokbot_update_bot or grokbot_send during install; do not modify the Grok Bot app or its files.
+```
+
 ## Tools
 
 | Tool | Purpose |

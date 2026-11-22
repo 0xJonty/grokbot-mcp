@@ -43,6 +43,19 @@ function isGatewayHost(u: URL) {
   return u.protocol === "https:" && (h.endsWith(".cursorvm.com") || h.endsWith(".cursor.sh") || h.endsWith(".cursor.com"));
 }
 
+function userAgentOs(): string {
+  switch (process.platform) {
+    case "win32":
+      return "(Windows NT 10.0; Win64; x64)";
+    case "darwin":
+      return "(Macintosh; Intel Mac OS X 10_15_7)";
+    case "linux":
+      return "(X11; Linux x86_64)";
+    default:
+      return `(compatible; ${process.platform})`;
+  }
+}
+
 function errCode(err: any): string {
   return String(err?.cause?.code ?? err?.code ?? err?.name ?? "");
 }
@@ -56,6 +69,28 @@ function isPreDelivery(err: any): boolean {
 function shortDetail(data: any, fallback: string): string {
   const d = data?.message || data?.error || data?.raw || fallback;
   return redact(String(d)).slice(0, 200);
+}
+
+/**
+ * Connect codes that mean "the server refused the request", not "it may have run".
+ * The box reports upstream Connect errors as HTTP 500 with a "[code] message" detail
+ * (e.g. "[permission_denied] A Sand box session is not permitted on this endpoint.").
+ */
+const DEFINITE_CONNECT_CODES = new Set([
+  "invalid_argument",
+  "not_found",
+  "already_exists",
+  "permission_denied",
+  "failed_precondition",
+  "out_of_range",
+  "unimplemented",
+  "unauthenticated",
+  "resource_exhausted",
+]);
+
+function connectCode(data: any, detail: string): string {
+  if (typeof data?.code === "string") return data.code;
+  return /^\[([a-z_]+)\]/.exec(detail)?.[1] ?? "";
 }
 
 async function readBody(res: Response): Promise<any> {
@@ -109,18 +144,30 @@ export class Transport {
     return creds;
   }
 
-  /** Connect-JSON unary call to api2. Retries once with re-read credentials on 401/403. */
-  async backend(service: string, method: string, body: object = {}, opts: { timeoutMs?: number } = {}): Promise<any> {
+  /**
+   * Connect-JSON unary call to api2. Retries once with re-read credentials on 401/403.
+   * `idempotent=false` (creates): only retries failures that guarantee non-delivery; a reset,
+   * timeout or 5xx gives `delivery_unknown` and is never retried.
+   */
+  async backend(service: string, method: string, body: object = {}, opts: { timeoutMs?: number; idempotent?: boolean; headers?: Record<string, string> } = {}): Promise<any> {
+    const idempotent = opts.idempotent ?? true;
     const url = new URL(`${this.backendBase}/aiserver.v1.${service}/${method}`);
     if (!isCursorBackend(url) && !process.env.GROKBOT_MCP_TEST) throw new GrokError("backend", "Refusing to send credentials to a non-Cursor backend URL.");
     for (let attempt = 0; ; attempt++) {
       const creds = await this.usableCredentials(attempt > 0);
+      const version = this.session.appVersion();
       const headers: Record<string, string> = {
+        // Per-call extras first so they can never override auth or client identity.
+        ...(opts.headers ?? {}),
         "content-type": "application/json",
         "connect-protocol-version": "1",
         authorization: "Bearer " + creds.accessToken,
+        // Same client identity as the desktop app (main-core.cjs `function Kpe(`).
+        "user-agent": `Mozilla/5.0 ${userAgentOs()} AppleWebKit/537.36 (KHTML, like Gecko) Sand/${version} Safari/537.36`,
         "x-cursor-client-type": "sand",
-        "x-cursor-client-version": this.session.appVersion(),
+        "x-cursor-client-version": version,
+        "x-cursor-client-os": process.platform,
+        "x-cursor-client-source": "sand-desktop",
         "x-sand-box-namespace": process.env.SAND_BOX_NAMESPACE || "prod",
         "x-ghost-mode": "true",
       };
@@ -139,9 +186,12 @@ export class Transport {
       } catch (err: any) {
         if (err instanceof GrokError) throw err;
         const c = errCode(err);
-        if (attempt < 2 && (isPreDelivery(err) || c === "ECONNRESET" || c === "UND_ERR_SOCKET")) {
+        if (attempt < 2 && (isPreDelivery(err) || (idempotent && (c === "ECONNRESET" || c === "UND_ERR_SOCKET")))) {
           await this.sleep(1000 * (attempt + 1));
           continue;
+        }
+        if (!idempotent && !isPreDelivery(err)) {
+          throw new GrokError("delivery_unknown", `${method} outcome unknown (${c === "TimeoutError" ? "timeout" : c || "network error"}).`);
         }
         throw new GrokError(
           c === "TimeoutError" ? "timeout" : "backend",
@@ -156,11 +206,17 @@ export class Transport {
       if (res.status === 401 || res.status === 403 || data?.code === "unauthenticated") {
         throw new GrokError("auth", "Cursor rejected the Grok Bot sign-in. Open the Grok Bot app and make sure you are signed in, then retry.", res.status);
       }
-      if (res.status >= 500 && attempt < 2) {
+      const detail = shortDetail(data, res.statusText);
+      const code = connectCode(data, detail);
+      const definite = res.status < 500 || DEFINITE_CONNECT_CODES.has(code);
+      if (!definite && idempotent && attempt < 2) {
         await this.sleep(1000 * (attempt + 1));
         continue;
       }
-      throw new GrokError("backend", `${method} failed: ${res.status} ${shortDetail(data, res.statusText)}`, res.status);
+      if (!definite && !idempotent) {
+        throw new GrokError("delivery_unknown", `${method} outcome unknown (${res.status}${code ? " " + code : ""} ${detail}).`, res.status);
+      }
+      throw new GrokError("backend", `${method} failed: ${res.status}${code ? " [" + code + "]" : ""} ${detail}`, res.status);
     }
   }
 
@@ -239,6 +295,11 @@ export class Transport {
     return null;
   }
 
+  /** Wait using the injected clock (tests advance a fake clock instead of sleeping). */
+  pause(ms: number): Promise<void> {
+    return this.sleep(ms);
+  }
+
   hasRoute(): boolean {
     return !!this.route && (!this.route.expiresAtMs || this.route.expiresAtMs > this.now());
   }
@@ -279,6 +340,10 @@ export class Transport {
       return { ok: false, failure: { kind: "route_dead", delivered: false, detail: `${res.status} ${reason || detail}` } };
     }
     if (res.status === 401 || res.status === 403) return { ok: false, failure: { kind: "auth", delivered: false, detail: String(res.status) } };
+    if (res.status >= 500 && !proxy && DEFINITE_CONNECT_CODES.has(connectCode(data, detail))) {
+      // Box-side refusal reported as 500 (e.g. upstream permission_denied): final, not transient.
+      return { ok: false, failure: { kind: "rejected", delivered: false, status: res.status, detail } };
+    }
     if (res.status >= 500) {
       // Proxy-level 502/503/504 mean the box did not answer.
       const kind = proxy ? "route_dead" : "transient";

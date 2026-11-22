@@ -83,7 +83,8 @@ export function registerTools(server: McpServer, t: Transport, version: string):
         const input = { name: a.name, instructions: a.instructions, title: a.title, avatarShape: a.avatarShape, avatarColor: a.avatarColor };
         if (!a.confirm) return bots.previewCreate(input);
         const r = await bots.create(input);
-        return `Created "${r.bot.name}" (${r.bot.id}).${r.verified ? " Verified." : " WARNING: could not verify fields; check grokbot_get_bot."} etag: ${r.etag}`;
+        const note = r.listed ? "" : " Not in the bot list yet; it may take a moment to appear.";
+        return `Created "${r.bot.name}" (${r.bot.id}).${r.verified ? " Verified." : " WARNING: could not verify fields; check grokbot_get_bot."}${note} etag: ${r.etag}`;
       }),
   );
 
@@ -147,9 +148,10 @@ export function registerTools(server: McpServer, t: Transport, version: string):
       run("send", async () => {
         const r = await send(t, bots, a.bot, a.message);
         const id = r.entryId ? `entry ${r.entryId}${r.seq !== undefined ? ` (#${r.seq})` : ""}` : "entry id not yet visible";
-        return r.delivery === "accepted"
-          ? `Delivered to "${r.bot}" at ${r.sentAt} Sydney — ${id}. Read replies with grokbot_history${r.seq !== undefined ? ` after=${r.seq}` : ""}.`
-          : `Sent to "${r.bot}" at ${r.sentAt} but receipt not confirmed (${id}). Check grokbot_history before resending.`;
+        const after = r.seq !== undefined ? ` after=${r.seq}` : "";
+        if (r.delivery === "accepted") return `Delivered to "${r.bot}" at ${r.sentAt} Sydney — ${id}. Read replies with grokbot_history${after}.`;
+        if (r.delivery === "pending") return `Accepted by the server for "${r.bot}" at ${r.sentAt}, still pending (${id}). Check grokbot_history${after}; do not resend.`;
+        return `Sent to "${r.bot}" at ${r.sentAt} but receipt not confirmed (${id}). Check grokbot_history before resending.`;
       }),
   );
 

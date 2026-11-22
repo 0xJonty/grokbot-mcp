@@ -38,3 +38,28 @@
 13. **Tests use Node's built-in runner** with type stripping, so there is no test or ts-runner dependency.
     TypeScript is restricted to erasable syntax.
 14. **The account email is masked** in status output (`us…@example.com`).
+15. **create_bot picks the creation route the way the app does** (`resolveAgentCreation`): it reads api2
+    `GetGrokBotRuntimeCapabilities`. With `temporalCreationEnabled` it calls api2 `CreateGrokBotTemporalAgent`
+    (`agentId` = our clientNonce, harness TEMPORAL, no kickstart, intro suppressed); otherwise it calls box `createAgent`.
+    On temporal accounts the box refuses `createAgent` with 500 `[permission_denied] A Sand box session is not permitted
+    on this endpoint.` Because we choose the id, an unknown outcome is settled by looking it up in `ListGrokBotAgents`
+    and is never retried. Server agents carry a row `id` and an `agentId`; the bot id used everywhere else is `agentId`.
+16. **Box 5xx with a definite Connect code is final.** The box reports upstream Connect errors as HTTP 500 with a
+    `[code] message` detail. For invalid_argument, not_found, already_exists, permission_denied, failed_precondition,
+    out_of_range, unimplemented, unauthenticated and resource_exhausted the request was refused, so we show the reason
+    and do not retry, instead of returning `delivery_unknown`. The same applies to api2 `backend()` calls.
+17. **Server-run bots are messaged through api2**, the same way as the app (main-app.cjs `async function e3e(`, case
+    `sendPrompt`): `SendGrokBotUserMessage` with `messageId` = clientNonce and the app's `x-cursor-timezone` and
+    `x-cursor-client-capabilities` headers. An unknown outcome is settled with `GetGrokBotSendStatus`. The app resends when
+    the status is NOT_FOUND, but we never resend; we report that delivery is unknown. A bot with no `temporal` harness
+    goes to the box. If the box gives a definite 409 "runs on the server", we fall through to the server route once,
+    which is safe because the box did not take the message. Every send failure names the endpoint and the harness.
+18. **History for server-run bots is read from api2** `ListGrokBotTranscriptEntries`, as the app does for temporal
+    agents. On a non-auth failure it falls back to the box mirror. Entries stored out of line (`blobHash`, no body) are
+    shown as a placeholder; we don't presign blob reads.
+19. **The bot list merges in the server roster.** Server-only bots are added, because a new bot can take a while to
+    reach the box. A box row for a `temporal` bot that the server no longer has is dropped as a stale mirror, unless the
+    server list failed or is truncated.
+20. **Client identity matches the app** (user-agent `Sand/<ver>`, `x-cursor-client-os`, `x-cursor-client-source`). The
+    version comes from `desktop-status.json`, then from package.json inside the installed `app.asar` (read in place),
+    and only as a last resort from a constant. It follows app updates without a code change.

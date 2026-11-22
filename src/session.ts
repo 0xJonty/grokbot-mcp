@@ -113,6 +113,48 @@ export function defaultAppDataDir(): string {
   return path.join(appData, "Grok Bot");
 }
 
+/** The installed app's resources/app.asar (per-user install under %LOCALAPPDATA%\Programs). */
+export function defaultAppAsar(): string {
+  if (process.env.GROKBOT_APP_ASAR) return process.env.GROKBOT_APP_ASAR;
+  const local = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || process.env.HOME || "", "AppData", "Local");
+  return path.join(local, "Programs", "Grok Bot", "resources", "app.asar");
+}
+
+/**
+ * `version` from package.json inside an Electron app.asar, without extracting it.
+ * Layout: [u32 4][u32 headerSize] then a header pickle [u32 payload][u32 jsonLen][json index];
+ * file offsets in the index are relative to 8 + headerSize.
+ */
+export function asarPackageVersion(asarPath: string): string | undefined {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(asarPath, "r");
+    const head = Buffer.alloc(16);
+    if (fs.readSync(fd, head, 0, 16, 0) !== 16) return undefined;
+    const headerSize = head.readUInt32LE(4);
+    const jsonLen = head.readUInt32LE(12);
+    if (jsonLen === 0 || jsonLen > 64 * 1024 * 1024 || jsonLen + 8 > headerSize) return undefined;
+    const json = Buffer.alloc(jsonLen);
+    fs.readSync(fd, json, 0, jsonLen, 16);
+    const entry = JSON.parse(json.toString("utf8"))?.files?.["package.json"];
+    const size = Number(entry?.size);
+    const offset = Number(entry?.offset);
+    if (!entry || entry.unpacked || !Number.isFinite(size) || !Number.isFinite(offset) || size <= 0 || size > 1024 * 1024) return undefined;
+    const buf = Buffer.alloc(size);
+    fs.readSync(fd, buf, 0, size, 8 + headerSize + offset);
+    const v = JSON.parse(buf.toString("utf8"))?.version;
+    return typeof v === "string" ? v : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/** Used only if neither desktop-status.json nor the installed app.asar gives a version. */
+const LAST_RESORT_APP_VERSION = "1.2.3";
+const VERSION_RE = /^\d+\.\d+\.\d+([-+][A-Za-z0-9.-]+)?$/;
+
 interface Stamp {
   mtimeMs: number;
   size: number;
@@ -150,9 +192,13 @@ export class AppSession implements SessionSource {
   private creds: { stamp: Stamp | null; lsStamp: Stamp | null; value: Credentials } | null = null;
   private route: { stamp: Stamp | null; accountKey: string; value: Route | null } | null = null;
 
-  constructor(opts: { dir?: string; unprotect?: Unprotect } = {}) {
+  private asarPath: string;
+  private asarVersion: { stamp: Stamp | null; value: string | undefined } | null = null;
+
+  constructor(opts: { dir?: string; unprotect?: Unprotect; asarPath?: string } = {}) {
     this.dir = opts.dir ?? defaultAppDataDir();
     this.unprotect = opts.unprotect ?? unprotectWithPowerShell;
+    this.asarPath = opts.asarPath ?? defaultAppAsar();
   }
 
   private file(name: string) {
@@ -164,9 +210,19 @@ export class AppSession implements SessionSource {
     return j && typeof j === "object" ? j : null;
   }
 
+  /**
+   * Client version sent as x-cursor-client-version, read from the installed app so it tracks updates:
+   * env override, else desktop-status.json (written by the running app), else the installed app.asar.
+   */
   appVersion(): string {
     const v = process.env.SAND_CLIENT_VERSION || this.desktopStatus()?.appVersion;
-    return typeof v === "string" && /^\d+\.\d+\.\d+([-+][A-Za-z0-9.-]+)?$/.test(v) ? v : "1.2.3";
+    if (typeof v === "string" && VERSION_RE.test(v)) return v;
+    const asar = this.asarPath;
+    const st = stamp(asar);
+    if (!this.asarVersion || !sameStamp(this.asarVersion.stamp, st)) this.asarVersion = { stamp: st, value: st ? asarPackageVersion(asar) : undefined };
+    const fromAsar = this.asarVersion.value;
+    if (typeof fromAsar === "string" && VERSION_RE.test(fromAsar)) return fromAsar;
+    return LAST_RESORT_APP_VERSION;
   }
 
   private async safeStorageKey(): Promise<Buffer> {

@@ -142,3 +142,25 @@ Common: `kind, id, timestampMs, seq, requestId?`.
 - `kind:"message"`, `role:"user"`, `content` (string), `richText`, `clientNonce` — user prompts.
 - `kind:"send-message"`, `message:{type:"text",content}` — bot replies; `message.type` also `widget{prompt,options}`, `connector{connector}`.
 - `kind:"event"`, `event:{type,action,…}`; `kind:"notice"`, `text`; `kind:"feedback"` (UI-only).
+
+## 5. Server-run ("temporal") bots **[live]**
+Bots with `harness:"temporal"` run on Cursor's servers. The app talks to them through api2 `aiserver.v1.GrokBotService`,
+not the box. The box refuses some of these calls: `createAgent` gives 500 `[permission_denied] A Sand box session is not
+permitted on this endpoint.` and `sendPrompt` gives 409 `This Bot runs on the server, and this version of the app can't
+message it.` Whether an account uses this is decided by `GetGrokBotRuntimeCapabilities` → `capabilities.temporalCreationEnabled`.
+
+Client identity headers, from the app's main-core.cjs (`function Kpe(`): `user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)
+AppleWebKit/537.36 (KHTML, like Gecko) Sand/<ver> Safari/537.36`, `x-cursor-client-type: sand`, `x-cursor-client-version: <ver>`,
+`x-cursor-client-os: win32`, `x-cursor-client-source: sand-desktop`, `x-sand-box-namespace: prod`.
+
+| RPC | Request | Reply |
+|---|---|---|
+| `CreateGrokBotTemporalAgent` | `{agentId (= clientNonce, a UUID), name, description, title, avatarShape, avatarColor, harness:"GROK_BOT_AGENT_HARNESS_KIND_TEMPORAL", kickstartRequested:false, introductionSuppressed:true}` | `{agent: GrokBotAgent}` |
+| `ListGrokBotAgents` | `{}` | `{agents: GrokBotAgent[], truncated?}`. `agent.agentId` is the bot id; `agent.id` is a server row id. |
+| `DeleteGrokBotAgent` | `{id: agentId}` | `{}`. The app then sends box `deleteAgents {ids}` to drop the box's mirror. |
+| `SendGrokBotUserMessage` | `{agentId, messageId (= clientNonce, deduped), text, sentAtMs (int64 string), isFork:false, attachmentPaths:[], attachmentNames:[], source:"GROK_BOT_CLIENT_SURFACE_DESKTOP", initiator:"GROK_BOT_USER_MESSAGE_INITIATOR_USER", sendSource:"GROK_BOT_SEND_SOURCE_CHAT"}` plus headers `x-cursor-timezone: <IANA>` and `x-cursor-client-capabilities: grok-bot-email-offer-card` | `{dispatched, delivery: GROK_BOT_USER_MESSAGE_DELIVERY_{ACCEPTED_BOX,ACCEPTED_TEMPORAL,DUPLICATE,REFUSED}, refusal?{failureCode,message}}` |
+| `GetGrokBotSendStatus` | `{agentId, messageId}` | `{status: GROK_BOT_SEND_STATUS_{NOT_FOUND,ACCEPTED,REJECTED,PENDING,UNKNOWN_DURABILITY}, echoEntryId?, rejectionCode?}` |
+| `ListGrokBotTranscriptEntries` | `{agentId, limit, beforeSeq? (int64 string, exclusive)}` | `{entries:[{seq (string), entryKind, body (base64 of the box-format entry JSON, without seq), entryId, updatedSeq, blobHash?, bodyOmitted?}]}`, newest first |
+
+The box roster mirrors server-run bots, but with a lag in both directions: a new bot can take a while to appear and a
+deleted one can linger. The server roster is authoritative.

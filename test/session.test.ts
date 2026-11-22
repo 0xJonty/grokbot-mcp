@@ -99,3 +99,27 @@ test("redact strips tokens", () => {
   assert.ok(!/abc\.def|supersecret|eyJabcdefghij|AAAAAAAAAA/.test(s), s);
   assert.equal(redact("bot 00000000-1111-4222-8333-444444444444 ok"), "bot 00000000-1111-4222-8333-444444444444 ok");
 });
+
+test("asarPackageVersion reads package.json from an app.asar", async () => {
+  const { asarPackageVersion } = await import("../src/session.ts");
+  const os = await import("node:os");
+  const fsm = await import("node:fs");
+  const pathm = await import("node:path");
+  const pkg = Buffer.from(JSON.stringify({ name: "x", version: "9.8.7" }));
+  const other = Buffer.from("console.log(1)");
+  const index = Buffer.from(JSON.stringify({ files: { "main.js": { size: other.length, offset: "0" }, "package.json": { size: pkg.length, offset: String(other.length) } } }));
+  const pad = (4 - (index.length % 4)) % 4;
+  const headerPickle = Buffer.alloc(8 + index.length + pad);
+  headerPickle.writeUInt32LE(4 + index.length + pad, 0);
+  headerPickle.writeUInt32LE(index.length, 4);
+  index.copy(headerPickle, 8);
+  const size = Buffer.alloc(8);
+  size.writeUInt32LE(4, 0);
+  size.writeUInt32LE(headerPickle.length, 4);
+  const dir = fsm.mkdtempSync(pathm.join(os.tmpdir(), "asar-"));
+  const f = pathm.join(dir, "app.asar");
+  fsm.writeFileSync(f, Buffer.concat([size, headerPickle, other, pkg]));
+  assert.equal(asarPackageVersion(f), "9.8.7");
+  assert.equal(asarPackageVersion(pathm.join(dir, "missing.asar")), undefined);
+  fsm.rmSync(dir, { recursive: true, force: true });
+});

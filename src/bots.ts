@@ -100,6 +100,18 @@ export function resolveBot(bots: Bot[], ref: string): Bot {
   throw new GrokError("not_found", `No bot named "${ref}". Bots: ${names || "(none)"}`);
 }
 
+/** The "(detail)" from a transport "X outcome unknown (detail)." error, else the whole message. */
+function unknownWhy(err: GrokError): string {
+  return /outcome unknown \((.*)\)\./.exec(err.message)?.[1] ?? err.message;
+}
+
+/** api2 GrokBotAgent -> Bot. Its `id` is a server row id; the bot id everywhere else is `agentId`. */
+export function serverAgentToBot(a: any): Bot | null {
+  if (!a || typeof a.agentId !== "string" || !a.agentId) return null;
+  const ms = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? undefined : Number(v));
+  return toBot({ ...a, id: a.agentId, createdAt: ms(a.createdAtMs), updatedAt: ms(a.updatedAtMs) });
+}
+
 function checkAvatar(kind: "shape" | "color", v: string | undefined): void {
   if (v === undefined || v === "") return;
   const allowed: readonly string[] = kind === "shape" ? AVATAR_SHAPES : AVATAR_COLORS;
@@ -115,10 +127,24 @@ export class Bots {
     this.t = t;
   }
 
+  /**
+   * Box roster plus server-run bots the box has not synced yet (a new server-run bot can take a while
+   * to reach the box roster; the app merges the server roster the same way). Server list failures are ignored.
+   */
   async list(): Promise<Bot[]> {
-    const data = await this.t.gateway("listAgents", {}, { idempotent: true });
+    const [data, server] = await Promise.all([
+      this.t.gateway("listAgents", {}, { idempotent: true }),
+      this.serverRoster().catch(() => null),
+    ]);
     const raw = Array.isArray(data) ? data : Array.isArray(data?.agents) ? data.agents : [];
-    const bots = raw.map(toBot).filter((b: Bot | null): b is Bot => !!b);
+    let bots: Bot[] = raw.map(toBot).filter((b: Bot | null): b is Bot => !!b);
+    if (server) {
+      const serverIds = new Set(server.bots.map((b) => b.id));
+      // The server owns server-run bots: a box row it no longer has is a stale mirror (e.g. just deleted).
+      if (!server.truncated) bots = bots.filter((b) => b.harness !== "temporal" || serverIds.has(b.id));
+      const ids = new Set(bots.map((b) => b.id));
+      for (const b of server.bots) if (!ids.has(b.id)) bots.push(b);
+    }
     this.cache = { at: Date.now(), bots };
     return bots;
   }
@@ -142,37 +168,101 @@ export class Bots {
     ].filter((l) => l !== null).join("\n");
   }
 
-  async create(input: CreateInput): Promise<{ bot: Bot; verified: boolean; etag: string }> {
+  /**
+   * Where the app creates bots: "temporal" (server-owned, api2 CreateGrokBotTemporalAgent) when the
+   * account's runtime capabilities say so, else "box" (gateway createAgent). Mirrors the app's
+   * resolveAgentCreation; with temporal creation on, the box refuses createAgent with permission_denied.
+   */
+  async creationRoute(): Promise<"temporal" | "box"> {
+    const data = await this.t.backend("GrokBotService", "GetGrokBotRuntimeCapabilities", {}, { timeoutMs: 20_000 });
+    return data?.capabilities?.temporalCreationEnabled === true ? "temporal" : "box";
+  }
+
+  /** Server-side roster (authoritative for temporal bots). Box ids are the server's `agentId`. */
+  async serverList(): Promise<Bot[]> {
+    return (await this.serverRoster()).bots;
+  }
+
+  private async serverRoster(): Promise<{ bots: Bot[]; truncated: boolean }> {
+    const data = await this.t.backend("GrokBotService", "ListGrokBotAgents", {});
+    const raw = Array.isArray(data?.agents) ? data.agents : [];
+    return { bots: raw.map(serverAgentToBot).filter((b: Bot | null): b is Bot => !!b), truncated: data?.truncated === true };
+  }
+
+  async create(input: CreateInput): Promise<{ bot: Bot; verified: boolean; listed: boolean; etag: string }> {
     validateCreate(input);
     const existing = await this.list();
     if (existing.some((b) => b.name.trim().toLowerCase() === input.name.trim().toLowerCase())) {
       throw new GrokError("invalid", `A bot named "${input.name.trim()}" already exists. Pick another name or update that bot.`);
     }
+    const name = input.name.trim();
+    const nonce = crypto.randomUUID();
+    const route = await this.creationRoute();
+    const created = route === "temporal" ? await this.createTemporal(input, name, nonce) : await this.createOnBox(input, name, nonce);
+
+    const fresh = await this.list().catch(() => null);
+    const listed = fresh?.find((b) => b.id === created.id) ?? null;
+    let verified = !!listed && listed.name === name && listed.instructions === input.instructions;
+    if (!verified && route === "temporal") {
+      const server = (await this.serverList().catch(() => null))?.find((b) => b.id === created.id) ?? null;
+      verified = !!server && server.name === name && server.instructions === input.instructions;
+    }
+    const bot = listed ?? created;
+    return { bot, verified, listed: !!listed, etag: etagOf(bot) };
+  }
+
+  private async createTemporal(input: CreateInput, name: string, nonce: string): Promise<Bot> {
+    // Same request the app sends (main-app.cjs G9e.create): agentId = clientNonce, no kickstart, no intro.
+    const req = {
+      agentId: nonce,
+      name,
+      description: input.instructions,
+      title: input.title ?? "",
+      avatarShape: input.avatarShape ?? "",
+      avatarColor: input.avatarColor ?? "",
+      harness: "GROK_BOT_AGENT_HARNESS_KIND_TEMPORAL",
+      kickstartRequested: false,
+      introductionSuppressed: true,
+    };
+    let data: any;
+    try {
+      data = await this.t.backend("GrokBotService", "CreateGrokBotTemporalAgent", req, { timeoutMs: 45_000, idempotent: false });
+    } catch (err) {
+      if (!(err instanceof GrokError) || (err.code !== "delivery_unknown" && err.code !== "timeout")) throw err;
+      // The id is ours, so an unknown outcome can be settled exactly by looking it up.
+      const found = (await this.serverList().catch(() => null))?.find((b) => b.id === nonce);
+      if (found) return found;
+      throw new GrokError("delivery_unknown", `Create outcome unknown (${unknownWhy(err)}) and the bot is not on the server yet. Run grokbot_list_bots before retrying.`);
+    }
+    const bot = serverAgentToBot(data?.agent);
+    if (!bot || bot.id !== nonce) throw new GrokError("backend", "Server did not confirm the new bot. Run grokbot_list_bots to check.");
+    return bot;
+  }
+
+  private async createOnBox(input: CreateInput, name: string, nonce: string): Promise<Bot> {
     const body: Record<string, unknown> = {
-      name: input.name.trim(),
+      name,
       description: input.instructions,
       title: input.title ?? "",
       avatarShape: input.avatarShape ?? "",
       avatarColor: input.avatarColor ?? "",
       origin: "user",
-      clientNonce: crypto.randomUUID(),
+      clientNonce: nonce,
     };
     let data: any;
     try {
       data = await this.t.gateway("createAgent", body, { idempotent: false });
     } catch (err) {
       if (err instanceof GrokError && err.code === "delivery_unknown") {
-        throw new GrokError("delivery_unknown", "Create outcome unknown. Run grokbot_list_bots to check whether it exists before retrying.");
+        throw new GrokError("delivery_unknown", `Create outcome unknown (${unknownWhy(err)}). Run grokbot_list_bots to check whether it exists before retrying.`);
       }
       throw err;
     }
     const created = toBot(data?.agent ?? data);
-    const fresh = await this.list().catch(() => null);
-    const found = fresh?.find((b) => (created ? b.id === created.id : b.name === body.name)) ?? null;
-    const bot = found ?? created;
-    if (!bot) throw new GrokError("gateway", "createAgent returned no bot. Run grokbot_list_bots to check.");
-    const verified = !!found && found.name === body.name && found.instructions === input.instructions;
-    return { bot, verified, etag: etagOf(bot) };
+    if (created) return created;
+    const found = (await this.list().catch(() => null))?.find((b) => b.name === name);
+    if (!found) throw new GrokError("gateway", "createAgent returned no bot. Run grokbot_list_bots to check.");
+    return found;
   }
 
   // ------------------------------------------------------------- update

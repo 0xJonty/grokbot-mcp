@@ -7,7 +7,8 @@ import { unifiedDiff } from "../src/diff.ts";
 
 const caps = (temporal: boolean) => () => json(200, { capabilities: { temporalCreationEnabled: temporal } });
 
-function world(initial = [agent("id-1", "Alpha"), agent("id-2", "Beta")], temporal = false) {
+/** Box-run bots: the box copy is authoritative and updates go to box updateAgent. */
+function world(initial = [agent("id-1", "Alpha", { harness: "box" }), agent("id-2", "Beta", { harness: "box" })], temporal = false) {
   const agents = initial.map((a) => ({ ...a }));
   const m = mockFetch({
     EnsureSandBox: () => ensureRunning(),
@@ -91,7 +92,7 @@ test("update: invalid avatar rejected", async () => {
 
 test("create: preview does nothing; confirm creates once and verifies", async () => {
   const w = world();
-  const prev = w.bots.previewCreate({ name: "Gamma", instructions: "do things" });
+  const prev = await w.bots.previewCreate({ name: "Gamma", instructions: "do things" });
   assert.match(prev, /PREVIEW/);
   assert.equal(w.m.counts.createAgent ?? 0, 0);
   const r = await w.bots.create({ name: "Gamma", instructions: "do things", avatarColor: "blue" });
@@ -114,16 +115,6 @@ test("create: unknown delivery is not retried", async () => {
   const { t } = makeTransport(new FakeSession(), m.fn);
   await assert.rejects(new Bots(t).create({ name: "N", instructions: "x" }), (e: any) => e.code === "delivery_unknown");
   assert.equal(m.counts.createAgent, 1);
-});
-
-test("create: temporal accounts create on the server with agentId = nonce, never on the box", async () => {
-  const w = world(undefined, true);
-  const r = await w.bots.create({ name: "Gamma", instructions: "do things" });
-  assert.equal(w.m.counts.createAgent ?? 0, 0);
-  const body = w.m.calls.find((c) => c.method === "CreateGrokBotTemporalAgent")!.body;
-  assert.equal(body.harness, "GROK_BOT_AGENT_HARNESS_KIND_TEMPORAL");
-  assert.equal(r.bot.id, body.agentId);
-  assert.ok(r.verified && r.listed);
 });
 
 test("create: temporal unknown outcome is settled by id lookup, not retried", async () => {

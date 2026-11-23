@@ -21,12 +21,13 @@
    avoids a protobuf dependency. We don't send `x-cursor-checksum`, because it isn't required.
 7. **The etag is the first 16 hex chars of sha256** over the canonical editable fields (name, instructions,
    title, avatarShape, avatarColor, notifyOnUpdates, hiddenFromSidebar). Shorter strings cost fewer tokens,
-   and 64 bits is enough to detect a stale edit.
+   and 64 bits is enough to detect a stale edit. For server-run bots the profile fields come from the server row
+   (see #29), so a mirror-based etag is stale by design.
 8. **create_bot refuses a duplicate name** (case-insensitive), because bots are addressed by exact name.
    It sends `origin:"user"` and a `clientNonce`, the same as gbot.
 9. **updateAgent always sends `name` + `description`.** It sends `title`/`avatar*` only when they changed (gbot
-   behaviour). We don't send `editedFields`/`serverSavedAtMs`: gbot works without them, and our etag check runs
-   just before the write.
+   behaviour). For box-run bots we don't send `editedFields`/`serverSavedAtMs`: gbot works without them, and our etag
+   check runs just before the write. Server-run bots use the server path instead (#28).
 10. **History cursors are transcript `seq` numbers** (`before` is exclusive and matches the gateway's `beforeSeq`;
     `after` is exclusive). UI-only `feedback` entries are skipped. Widgets and connectors are shown as short tags.
 11. **Usage** comes from `GetSandUsageStatus` (percent, reset time) plus `GetGrokBotUsageBreakdown` (weekly ppm
@@ -59,7 +60,7 @@
     shown as a placeholder; we don't presign blob reads.
 19. **The bot list merges in the server roster.** Server-only bots are added, because a new bot can take a while to
     reach the box. A box row for a `temporal` bot that the server no longer has is dropped as a stale mirror, unless the
-    server list failed or is truncated.
+    server list failed or is truncated. Since 0.3.0 the server row also supplies the profile (#29).
 20. **Client identity matches the app** (user-agent `Sand/<ver>`, `x-cursor-client-os`, `x-cursor-client-source`). The
     version comes from `desktop-status.json`, then from package.json inside the installed `app.asar` (read in place),
     and only as a last resort from a constant. It follows app updates without a code change.
@@ -75,9 +76,9 @@
 23. **Tool metadata follows the MCP spec guidance**: every tool has a `title`, read-only tools say so, every
     free-form parameter has a short description, and the server sends short `instructions` (preview-then-confirm,
     etag, never resend). Descriptions stay terse because tool definitions are paid for on every turn.
-24. **Input bounds are generous sanity limits** (name/title ≤200, instructions ≤200k, message ≤100k, blank message
-    rejected). The app bundle publishes no limits, so these only stop empty or runaway input before any network call;
-    `bots.ts` still does the semantic checks.
+24. **Input bounds are generous sanity limits** (instructions ≤200k, message ≤100k, blank message rejected). They
+    only stop empty or runaway input before any network call; `bots.ts` does the semantic checks. Since 0.3.0 name and
+    title are ≤255 and instructions ≤20,000, see #33.
 25. **Only `grokbot_get_bot` declares an `outputSchema`** and returns `structuredContent` (plus the same JSON as text
     for older clients). The other tools return compact text written for the model; schemas for them would add tokens
     without helping it.
@@ -85,3 +86,59 @@
     (1.32.2) negotiates up to 2025-11-25 and handles older clients. Revisit when the SDK ships the new revision.
 27. **Deploy is a Node script** (`scripts/deploy.mjs`) so it works from plain Windows as well as WSL. From WSL it
     asks Windows for `%USERPROFILE%` instead of assuming the WSL user name matches. `deploy.sh` just calls it.
+28. **Server-run bots are updated the way the app saves them** (renderer `et`/`tt`, main-app.cjs `updateIdentity`): api2
+    `UpdateGrokBotAgent {id: serverRowId, partialUpdate: true, <changed profile fields only>}` (idempotent), then box
+    `updateAgent {id, profile, editedFields, serverHeldFields, serverSavedAtMs: reply agent.updatedAtMs}` so the mirror
+    takes the server values. Runs read the server copy at the start of every turn; a box-only write never reaches them
+    (proven live 2026-11-23). Who may write follows the app's `CVr`: harness `temporal`, a server row id, and
+    `viewerIsOwner !== false` (missing counts as owner, as in the app). We never fall back to a box-only write for ANY
+    profile field of a server-run bot. The app only blocks the fallback for description and title (`BUr`), but a
+    box-only name or avatar would not reach the server either, and would leave the etag and the mirror out of step.
+    Notify and hidden are box-only state and still use the box setters.
+29. **Reads prefer the server for server-run bots.** `list()` takes name, instructions, title and avatar from the
+    `ListGrokBotAgents` row, and notify, hidden, running, unread and awaiting from the box row. It keeps the server
+    row id (`serverRowId`), `viewerIsOwner` and `updatedAtMs` (`serverUpdatedAt`), and sets `mirrorInSync` (box
+    description equals server description; false for a bot not yet mirrored). If the server list fails, the box row is
+    used and labelled `source: box-mirror (server unreachable)`; edits to its profile are then refused.
+30. **Verification for server-run edits uses the server only**: the UpdateGrokBotAgent reply and a fresh
+    `ListGrokBotAgents`. A mirror that lags is reported (`mirror lagging`) but is not a failure. A failed box mirror call,
+    or a failed notify/hidden setter after a successful server write, is a warning in the result, because the server
+    write already happened and must not be hidden behind an error.
+31. **Refused server writes point to the documented method.** For `permission_denied`, `unimplemented` or `not_found`
+    from UpdateGrokBotAgent the result is "Server update refused (<code>)… ask the bot to replace its description with
+    UpdateProfile and quote it back." Any other failure is shown with its reason; nothing is sent to the box. Connect
+    maps `permission_denied` to HTTP 403, so `backend()` no longer treats a 403 with that code as a sign-in failure
+    (no credential re-read, no "signed out" message).
+32. **Server-run bots get no title.** Live test on a throwaway bot (2026-11-23 23:27): both `CreateGrokBotTemporalAgent`
+    and `UpdateGrokBotAgent {title}` fold the title into the name (`Name · Title`) and leave the title empty. The brief
+    asked us to create with title "" and then set the title with UpdateGrokBotAgent; that also renames the bot, so we
+    refuse a title for server-run bots (create preview, create and update) before any write. Create always sends
+    title "" and verifies name, title and description against the server row. Box-run bots keep titles.
+33. **Input rules match the app.** Trailing whitespace is stripped from instructions (the mirror trims trailing newlines,
+    which made the copies differ and verification fail). After stripping, instructions over 20,000 chars (`Fu=2e4`;
+    `ace()` truncates) and name or title over 255 are rejected rather than silently truncated. Non-ASCII is stored
+    exactly by the server, so there is no ASCII advice. The zod bound for instructions stays a 200k sanity limit so an
+    over-long value gets the clearer message from `bots.ts`.
+34. **The box mirror profile uses `avatarShape`/`avatarColor`**, the box schema's names (`Tye`/`H7` in the
+    node-agent-coordinator), and only the changed ones, like the box path. `editedFields` and `serverHeldFields` are both
+    the changed profile fields in wire names (`description`, not `instructions`).
+35. **`grokbot_get_bot` output.** The instructions key is `instructions (hidden description)`: personal bots no longer
+    show this field in the app, but it is still put into context every turn. The box `updatedAt` is shown as
+    `lastActivityAt` (it equals last activity, not last edit) and `serverUpdatedAt` is the real edit time. Times stay
+    epoch ms, as before. `profileFile` is only added for server-run bots, where the box file is a mirror.
+36. **`grokbot_routines` is read-only.** It reads api2 `ListGrokBotAgentRoutines {agentId, timeZone}` (the app's
+    call); details come from each routine's `recordJson` (the box `automation.json` record: prompt, trigger with
+    schedule/firesAt/window/timing, runs). Runs are sorted newest first and the last 5 are shown, labelled like the
+    app's drill-down (`error` → failed, `ok` → reported outcome kind). The text of a failed run's error has no fixed
+    field in the bundle, so several likely fields are read, and "Automation run rate limit exceeded" anywhere in a run is
+    flagged. No routine write tool: the docs offer no supported API, so routines are changed through the bot or the app.
+37. **`grokbot_delete_bot` was added on request** (SPEC.md said "No delete tool"; SPEC is updated). It previews by
+    default and needs `confirm=true` plus `confirmName` equal to the exact, case-sensitive name. Server-run bots: api2
+    `DeleteGrokBotAgent {id: agentId}` (idempotent; `not_found` = already gone, as in the app), then box
+    `deleteAgents {ids}`; a mirror failure is a warning. If the server delete fails, nothing is removed from the box.
+    It refuses while the server copy is unreadable, so it never does a box-only delete of a server-run bot.
+38. **No app-update warning in `grokbot_status` yet.** The brief asked for one when the app is older than the newest
+    version it knows of. That version lives only in the app's in-memory updater (`offeredVersion`, from the update
+    feed), and the minimum version and maximum age come from a Statsig dynamic config (`sand_min_client_version`).
+    Neither is readable cheaply without the network, so this is skipped, as the brief allowed.
+39. **No other new write tools** (memory, routines, approvals). The docs offer no supported API for them.

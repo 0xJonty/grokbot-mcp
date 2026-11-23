@@ -105,15 +105,32 @@ All settings are optional environment variables.
 |---|---|
 | `grokbot_status` | Shows whether the app is running, sign-in state, whether the box is awake or asleep, and the time zone in use. It never wakes the box. |
 | `grokbot_list_bots` | Lists bots by id, name, and a preview of their instructions. Takes an optional `query`. |
-| `grokbot_get_bot` | Returns the full config, including instructions and an `etag`. |
+| `grokbot_get_bot` | Returns the full config, including the instructions (the bot's hidden description), where they were read from (`source`), when they were last edited (`serverUpdatedAt`), whether the box mirror matches (`mirrorInSync`) and an `etag`. |
 | `grokbot_create_bot` | Creates a bot. With `confirm=false` (the default) it only shows a preview. |
-| `grokbot_update_bot` | Edits name, instructions, title, avatar, notify, or hidden. Needs the `etag` from `grokbot_get_bot` and rejects the edit if the bot changed since then. With `confirm=false` it shows a diff. With `confirm=true` it writes, re-reads, and checks the result. |
+| `grokbot_update_bot` | Edits name, instructions, title (box-run bots only), avatar, notify, or hidden. Needs the `etag` from `grokbot_get_bot` and rejects the edit if the bot changed since then. With `confirm=false` it shows a diff. With `confirm=true` it writes, re-reads, and checks the result. |
+| `grokbot_delete_bot` | Deletes a bot permanently. With `confirm=false` (the default) it only shows a preview; `confirm=true` also needs `confirmName` set to the bot's exact name. |
 | `grokbot_history` | Shows chat history, newest last, in your time zone. Text is cut to 500 chars unless `full=true`. Use `before=`/`after=` with the entry numbers from a previous result to page. |
+| `grokbot_routines` | Read-only. Shows a bot's routines: schedule, timing window, next run, the routine prompt and the last 5 runs (failed runs are not retried, and rate-limit failures are flagged). |
 | `grokbot_send` | Sends one message and returns a delivery receipt. It is never resent automatically. |
 | `grokbot_usage` | Shows how much of the weekly Grok usage is used, when it resets, and a breakdown by source and by bot. |
 
-`bot` takes an id or an exact name (case-insensitive). There is no delete tool and no approval tool; do those in
-the Grok Bot app.
+`bot` takes an id or an exact name (case-insensitive). There are no tools for approvals, memory or editing
+routines; do those through the bot (in chat) or in the Grok Bot app.
+
+### Server-run bots
+
+All current Grok Bots are server-run (harness `temporal`). Their instructions live on Cursor's server, and every
+turn and routine run reads that copy when it starts; the bot's cloud computer keeps only a mirror, which can lag.
+`grokbot_update_bot` writes the server copy first, the same way the app does, then tells the mirror. Edits take
+effect from the bot's next turn or routine run. Notes:
+
+- The server write uses an internal app endpoint (`UpdateGrokBotAgent`), not a public API, and may change. If the
+  server refuses it, the tool says so and writes nothing; the documented way to change a bot's description is to ask
+  the bot in chat to replace it (its `UpdateProfile` tool) and quote the saved text back.
+- Instructions are limited to 20,000 characters and names to 255 (the app's limits). Trailing whitespace is removed.
+  Non-ASCII text is stored exactly.
+- Server-run bots have no separate title: the server folds a title into the name (`Name · Title`), so the tool
+  refuses a title for them.
 
 ## Updating
 
@@ -137,6 +154,10 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed.
   token (see DECISIONS.md).
 - **"cloud computer unreachable after 90s"**: the box failed to wake. Retry, or open the app.
 - **"Delivery … unknown"**: check `grokbot_history` before you resend.
+- **"Server update refused"**: the server would not take the edit. Ask the bot in chat to replace its description
+  (see [Server-run bots](#server-run-bots)).
+- **`grokbot_get_bot` shows `source: box-mirror (server unreachable)`**: the server list could not be read, so you are
+  seeing the mirror, which may be stale. Edits to server-run bots are refused until the server is reachable.
 - **Tools don't appear**: check Claude Desktop's log for the server, `mcp-server-grokbot.log` (named after the
   config key or extension). It is in `%LOCALAPPDATA%\Claude\Logs` for current Microsoft Store versions, or
   `%APPDATA%\Claude\logs` for the installer version. A healthy start ends with `grokbot-mcp <version> ready (stdio)`.
@@ -144,7 +165,7 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed.
   which rotates at 256 KB. Some Microsoft Store versions of Claude Desktop make Windows redirect that file to
   `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\grokbot-mcp\log.txt`; check there if the first is
   missing or stale. Tokens are never logged.
-- **Smoke test** (read-only; previews only, never creates, edits or sends). Set `GROKBOT_MCP_BIN` to test an
+- **Smoke test** (read-only; previews only, never creates, edits, deletes or sends). Set `GROKBOT_MCP_BIN` to test an
   installed copy instead of `dist/`:
   - Windows: `node scripts\smoke.mjs`
   - WSL: `"/mnt/c/Program Files/nodejs/node.exe" "$(wslpath -w scripts/smoke.mjs)"`
@@ -169,11 +190,11 @@ Install the grokbot-mcp MCP server from https://github.com/0xJonty/grokbot-mcp f
    "grokbot": { "command": "<absolute path to node.exe>", "args": ["<path printed by npm run deploy>"] }
    Use real absolute paths and keep the JSON valid.
 4. Run the read-only smoke test: set GROKBOT_MCP_BIN to the deployed file and run `node scripts/smoke.mjs`.
-   It must list 8 tools and grokbot_status must report signedIn=true.
+   It must list 10 tools and grokbot_status must report signedIn=true.
 5. Tell me to fully quit Claude Desktop (including the tray icon) and reopen it, then ask Claude to run grokbot_status.
 
-Rules: never print or log tokens or keys; do not call grokbot_create_bot, grokbot_update_bot or grokbot_send with
-confirm=true during install; do not modify the Grok Bot app or its files.
+Rules: never print or log tokens or keys; do not call grokbot_create_bot, grokbot_update_bot, grokbot_delete_bot or
+grokbot_send with confirm=true during install; do not modify the Grok Bot app or its files.
 ```
 
 ## Security and privacy

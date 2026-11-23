@@ -2,7 +2,7 @@
 // On Windows:   node scripts\smoke.mjs [botName]
 // From WSL:     "/mnt/c/Program Files/nodejs/node.exe" "$(wslpath -w scripts/smoke.mjs)" [botName]
 // GROKBOT_MCP_BIN picks a different server file (e.g. the deployed copy or an unpacked .mcpb).
-// Never performs live create/update/send (previews only, confirm=false).
+// Never performs live create/update/delete/send (previews only, confirm=false).
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -91,15 +91,20 @@ if (target) {
   const got = await call("grokbot_get_bot", { bot: target }, (t) => {
     try {
       const j = JSON.parse(t);
-      return JSON.stringify({ ...j, instructions: `<${j.instructions.length} chars>` }, null, 1);
+      const k = "instructions (hidden description)";
+      return JSON.stringify({ ...j, [k]: `<${String(j[k] ?? "").length} chars>` }, null, 1);
     } catch {
       return t;
     }
   });
-  await call("grokbot_history", { bot: target, limit: 5 }, (t) => t.split("\n").map((l) => (l.length > 160 ? l.slice(0, 160) + "…" : l)).join("\n"));
+  const clip = (t) => t.split("\n").map((l) => (l.length > 160 ? l.slice(0, 160) + "…" : l)).join("\n");
+  await call("grokbot_history", { bot: target, limit: 5 }, clip);
+  await call("grokbot_routines", { bot: target }, clip);
+  await call("grokbot_delete_bot", { bot: target, confirm: false });
   if (got.ok) {
-    const etag = JSON.parse(got.text).etag;
-    await call("grokbot_update_bot", { bot: target, etag, title: "smoke-preview-title", confirm: false });
+    const { etag, name } = JSON.parse(got.text);
+    // Preview only (confirm=false). Name, not title: server-run bots refuse a title (DECISIONS.md #32).
+    await call("grokbot_update_bot", { bot: target, etag, name: `${name} (smoke preview)`, confirm: false });
   }
 }
 await call("grokbot_create_bot", { name: "Smoke Preview Bot", instructions: "preview only", confirm: false });

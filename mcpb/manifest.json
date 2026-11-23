@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "grokbot-mcp",
   "display_name": "Grok Bot",
-  "version": "0.2.0",
-  "description": "Manage your Grok Bots from Claude: list, read, create, edit, message, check usage.",
-  "long_description": "Unofficial. Uses the signed-in **Grok Bot** Windows desktop app session, so no tokens are copied or configured. Wakes the bot's cloud computer when it is asleep. Writes are two-step (preview, then confirm), edits are guarded by an etag, and messages are never resent automatically. There is no delete tool.\n\nRequires the Grok Bot desktop app installed and signed in on this Windows PC. Not affiliated with xAI, Cursor or Anthropic; it talks to private APIs that can change without notice.",
+  "version": "0.3.0",
+  "description": "Manage your Grok Bots from Claude: list, read, create, edit, delete, message, view routines, check usage.",
+  "long_description": "Unofficial. Uses the signed-in **Grok Bot** Windows desktop app session, so no tokens are copied or configured. Wakes the bot's cloud computer when it is asleep. Writes are two-step (preview, then confirm), edits are guarded by an etag, deleting needs the exact bot name, and messages are never resent automatically.\n\nRequires the Grok Bot desktop app installed and signed in on this Windows PC. Not affiliated with xAI, Cursor or Anthropic; it talks to private APIs that can change without notice.",
   "author": {
     "name": "Jonty Atkinson",
     "url": "https://github.com/0xJonty"
@@ -32,10 +32,12 @@
   "tools": [
     { "name": "grokbot_status", "description": "Grok Bot health: app, sign-in, box awake/asleep." },
     { "name": "grokbot_list_bots", "description": "List Grok bots (id, name, instructions preview)." },
-    { "name": "grokbot_get_bot", "description": "Full bot config incl. instructions and etag (needed for update)." },
+    { "name": "grokbot_get_bot", "description": "Full bot config incl. instructions (hidden description) and etag (needed for update)." },
     { "name": "grokbot_create_bot", "description": "Create a bot. confirm=false (default) previews only." },
-    { "name": "grokbot_update_bot", "description": "Edit bot fields. Needs etag from grokbot_get_bot. confirm=false (default) shows a diff only." },
+    { "name": "grokbot_update_bot", "description": "Edit bot fields. Needs etag from grokbot_get_bot. confirm=false (default) shows a diff only. Server-run bots are written via an internal app endpoint that may change." },
+    { "name": "grokbot_delete_bot", "description": "Permanently delete a bot. confirm=false (default) previews; confirm=true also needs confirmName." },
     { "name": "grokbot_history", "description": "Bot chat history, newest last. Cursors: before/after = entry # from a previous result." },
+    { "name": "grokbot_routines", "description": "A bot's routines: schedule, next run, prompt, last 5 runs. Read-only." },
     { "name": "grokbot_send", "description": "Send a message to a bot. Returns a delivery receipt; never auto-resent." },
     { "name": "grokbot_usage", "description": "Grok usage used/limit and reset time." }
   ],

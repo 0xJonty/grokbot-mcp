@@ -5,10 +5,41 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-23
+
 ### Fixed
+- `grokbot_update_bot` now actually changes server-run (temporal) bots. Before, it wrote only the box mirror and
+  checked the mirror, so it reported "Verified" while the bot kept running its old instructions, and the edit was
+  lost when the mirror re-synced. It now writes the server copy first (the app's own save path), then tells the
+  mirror with `serverHeldFields`, and verifies against the server. Edits take effect from the bot's next turn or
+  routine run. There is no box-only fallback for server-run bots: if the server write fails, nothing is written and
+  the reason is shown. If the server refuses it, the tool points to the documented chat method (ask the bot to
+  replace its description with `UpdateProfile`).
+- `grokbot_list_bots` and `grokbot_get_bot` show the server copy of name, instructions and avatar for server-run
+  bots instead of the possibly stale mirror. The `etag` covers the server values.
+- `grokbot_create_bot` no longer turns "Name" + title into a bot named "Name · Title". The server folds any title
+  into the name for server-run bots, so a title is now refused for them (create and update) instead.
+- Trailing whitespace in instructions is removed before saving. The mirror trimmed it, so the two copies differed and
+  verification failed.
+- A backend `permission_denied` (HTTP 403) is reported as a refusal with its reason, not as a sign-in problem.
 - README: Claude Desktop config and log locations for current Microsoft Store versions
   (`%LOCALAPPDATA%\Claude-Data\claude_<id>\` and `%LOCALAPPDATA%\Claude\Logs`). The agent install prompt now checks
   every known config location.
+
+### Added
+- `grokbot_routines` (read-only): a bot's routines with schedule, timing window, next run, prompt and the last 5 runs.
+  Rate-limit failures are flagged, because failed runs are not retried.
+- `grokbot_delete_bot`: preview first; deleting needs `confirm=true` and the bot's exact name as `confirmName`.
+  Server-run bots are deleted on the server, then removed from the box mirror.
+- `grokbot_get_bot` shows `source`, `serverUpdatedAt` (the real last-edit time), `mirrorInSync` and, for server-run
+  bots, the mirror's `profileFile` path. `grokbot_list_bots` flags bots shown from the mirror.
+
+### Changed
+- `grokbot_get_bot`: the instructions field is labelled `instructions (hidden description)`, and the box `updatedAt`
+  is shown as `lastActivityAt` (it tracks activity, not edits).
+- Instructions are limited to 20,000 characters and name and title to 255, the app's limits. Non-ASCII text is fine.
+- The `grokbot_update_bot` description says that server-run bots are written through an internal app endpoint that
+  may change.
 
 ## [0.2.0] - 2026-11-23
 
@@ -47,7 +78,8 @@ All notable changes to this project are documented here. The format follows
 
 - First release: status, list, get, create, update, history, send and usage tools for Grok Bots.
 
-[Unreleased]: https://github.com/0xJonty/grokbot-mcp/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/0xJonty/grokbot-mcp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/0xJonty/grokbot-mcp/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/0xJonty/grokbot-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/0xJonty/grokbot-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/0xJonty/grokbot-mcp/releases/tag/v0.1.0

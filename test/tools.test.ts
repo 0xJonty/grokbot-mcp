@@ -45,7 +45,7 @@ test("tools/list: every tool has a title, annotations and described params; matc
     }
   }
   const ro = tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort();
-  assert.deepEqual(ro, ["grokbot_get_bot", "grokbot_history", "grokbot_list_bots", "grokbot_status", "grokbot_usage"]);
+  assert.deepEqual(ro, ["grokbot_get_bot", "grokbot_history", "grokbot_list_bots", "grokbot_routines", "grokbot_status", "grokbot_usage"]);
   assert.equal(client.getInstructions(), SERVER_INSTRUCTIONS);
   assert.equal(client.getServerVersion()?.title, "Grok Bot");
 });
@@ -57,6 +57,9 @@ test("get_bot: structuredContent matches the text JSON and the declared outputSc
   assert.deepEqual(r.structuredContent, JSON.parse(r.content[0].text));
   assert.equal(r.structuredContent.name, "Alpha");
   assert.match(r.structuredContent.etag, /^[0-9a-f]{16,}$/);
+  assert.equal(typeof r.structuredContent["instructions (hidden description)"], "string");
+  assert.equal(r.structuredContent.source, "box");
+  assert.equal("updatedAt" in r.structuredContent, false);
 });
 
 test("input bounds: blank message and empty bot are rejected before any network call", async () => {

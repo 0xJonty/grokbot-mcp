@@ -1,9 +1,10 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { AVATAR_COLORS, AVATAR_SHAPES, Bots, botFull, formatBotFull, resolveBot, type Editable } from "./bots.ts";
+import { AVATAR_COLORS, AVATAR_SHAPES, Bots, INSTRUCTIONS_LABEL, MAX_INSTRUCTIONS, MAX_NAME, botFull, formatBotFull, resolveBot, type Editable } from "./bots.ts";
 import { errorText } from "./errors.ts";
 import { history, send, truncate } from "./history.ts";
 import { log } from "./log.ts";
+import { routines } from "./routines.ts";
 import { status } from "./status.ts";
 import { timeZone } from "./time.ts";
 import type { Transport } from "./transport.ts";
@@ -28,14 +29,15 @@ async function run(name: string, fn: () => Promise<Output>): Promise<Result> {
   }
 }
 
-// Bounds are generous sanity limits (the app publishes none); bots.ts does the semantic checks.
-const bot = z.string().min(1).max(200).describe("Bot id or exact name");
+// Name/title match the app's 255-char cap. Instructions get a generous sanity bound here; bots.ts enforces the
+// app's 20,000-char cap after stripping trailing whitespace, with a clearer message.
+const bot = z.string().min(1).max(MAX_NAME).describe("Bot id or exact name");
 const confirm = z.boolean().default(false).describe("false = preview only; true = write");
 const shape = z.enum(AVATAR_SHAPES).optional();
 const color = z.enum(AVATAR_COLORS).optional();
-const name = z.string().min(1).max(200);
-const title = z.string().max(200).describe("Subtitle shown under the name");
-const instructions = z.string().max(200_000).describe("The bot's system instructions");
+const name = z.string().min(1).max(MAX_NAME);
+const title = z.string().max(MAX_NAME).describe("Subtitle under the name (box-run bots only)");
+const instructions = z.string().max(200_000).describe(`Bot instructions (hidden description), max ${MAX_INSTRUCTIONS} chars`);
 
 // Shape of grokbot_get_bot's structuredContent (mirrors botFull in bots.ts).
 const botOutput = {
@@ -50,10 +52,14 @@ const botOutput = {
   hiddenFromSidebar: z.boolean(),
   harness: z.string().optional(),
   origin: z.string().optional(),
+  source: z.string().optional(),
+  mirrorInSync: z.boolean().optional(),
   createdAt: z.number().optional(),
-  updatedAt: z.number().optional(),
+  serverUpdatedAt: z.number().optional(),
+  lastActivityAt: z.number().optional(),
+  profileFile: z.string().optional(),
   etag: z.string(),
-  instructions: z.string(),
+  [INSTRUCTIONS_LABEL]: z.string(),
 };
 
 /** Sent once at initialize; clients may add it to the model's context. Keep it short. */
@@ -62,7 +68,8 @@ export const SERVER_INSTRUCTIONS =
   "create_bot and update_bot are two-step: call with confirm=false to preview, show the user, then confirm=true. " +
   "update_bot needs the etag from a fresh grokbot_get_bot. " +
   "grokbot_send is never retried automatically: if delivery is unknown, check grokbot_history before sending again. " +
-  "There is no delete or approval tool; those are done in the Grok Bot app.";
+  "delete_bot also needs confirmName = the exact bot name. " +
+  "There is no tool for approvals, memory or routine edits: do those through the bot or the Grok Bot app.";
 
 export function registerTools(server: McpServer, t: Transport, version: string): void {
   const bots = new Bots(t);
@@ -86,7 +93,13 @@ export function registerTools(server: McpServer, t: Transport, version: string):
         return list
           .map((b) => {
             const preview = b.instructions.replace(/\s+/g, " ").trim();
-            const flags = [b.isGroup ? "group" : null, b.isRunningTurn ? "working" : null, b.unreadCount ? `${b.unreadCount} unread` : null, b.awaitingUserResponse ? "awaiting you" : null].filter(Boolean).join(", ");
+            const flags = [
+              b.isGroup ? "group" : null,
+              b.isRunningTurn ? "working" : null,
+              b.unreadCount ? `${b.unreadCount} unread` : null,
+              b.awaitingUserResponse ? "awaiting you" : null,
+              b.source?.startsWith("box-mirror") ? b.source : null,
+            ].filter(Boolean).join(", ");
             return `${b.name} | ${b.id}${flags ? ` | ${flags}` : ""} | ${preview ? truncate(preview, 80) : "(no instructions)"}`;
           })
           .join("\n");
@@ -95,7 +108,7 @@ export function registerTools(server: McpServer, t: Transport, version: string):
 
   server.registerTool(
     "grokbot_get_bot",
-    { title: "Get bot", description: "Full bot config incl. instructions and etag (needed for update).", inputSchema: { bot }, outputSchema: botOutput, annotations: ro },
+    { title: "Get bot", description: "Full bot config incl. instructions (hidden description) and etag (needed for update).", inputSchema: { bot }, outputSchema: botOutput, annotations: ro },
     ({ bot: ref }) =>
       run("get_bot", async () => {
         const b = resolveBot(await bots.list(), ref);
@@ -121,7 +134,7 @@ export function registerTools(server: McpServer, t: Transport, version: string):
     (a) =>
       run("create_bot", async () => {
         const input = { name: a.name, instructions: a.instructions, title: a.title, avatarShape: a.avatarShape, avatarColor: a.avatarColor };
-        if (!a.confirm) return bots.previewCreate(input);
+        if (!a.confirm) return await bots.previewCreate(input);
         const r = await bots.create(input);
         const note = r.listed ? "" : " Not in the bot list yet; it may take a moment to appear.";
         return `Created "${r.bot.name}" (${r.bot.id}).${r.verified ? " Verified." : " WARNING: could not verify fields; check grokbot_get_bot."}${note} etag: ${r.etag}`;
@@ -132,7 +145,7 @@ export function registerTools(server: McpServer, t: Transport, version: string):
     "grokbot_update_bot",
     {
       title: "Update bot",
-      description: "Edit bot fields. Needs etag from grokbot_get_bot. confirm=false (default) shows a diff only.",
+      description: "Edit bot fields. Needs etag from grokbot_get_bot. confirm=false (default) shows a diff only. Server-run bots are written via an internal app endpoint that may change.",
       inputSchema: {
         bot,
         etag: z.string().min(1).max(128).describe("From grokbot_get_bot; rejects the edit if the bot changed since"),
@@ -163,6 +176,21 @@ export function registerTools(server: McpServer, t: Transport, version: string):
   );
 
   server.registerTool(
+    "grokbot_delete_bot",
+    {
+      title: "Delete bot",
+      description: "Permanently delete a bot. confirm=false (default) previews; confirm=true also needs confirmName.",
+      inputSchema: {
+        bot,
+        confirmName: z.string().max(MAX_NAME).optional().describe("The bot's exact name; required with confirm=true"),
+        confirm,
+      },
+      annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    },
+    (a) => run("delete_bot", () => bots.delete(a.bot, a.confirm, a.confirmName)),
+  );
+
+  server.registerTool(
     "grokbot_history",
     {
       title: "Bot chat history",
@@ -177,6 +205,17 @@ export function registerTools(server: McpServer, t: Transport, version: string):
       annotations: ro,
     },
     (a) => run("history", () => history(t, bots, a.bot, { limit: a.limit, before: a.before, after: a.after, full: a.full })),
+  );
+
+  server.registerTool(
+    "grokbot_routines",
+    {
+      title: "Bot routines",
+      description: "A bot's routines: schedule, next run, prompt, last 5 runs. Read-only.",
+      inputSchema: { bot, full: z.boolean().default(false).describe("Untruncated routine prompts") },
+      annotations: ro,
+    },
+    (a) => run("routines", () => routines(t, bots, a.bot, { full: a.full })),
   );
 
   server.registerTool(

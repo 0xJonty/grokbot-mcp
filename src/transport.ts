@@ -199,11 +199,14 @@ export class Transport {
         );
       }
       if (res.ok) return data;
-      if ((res.status === 401 || res.status === 403 || data?.code === "unauthenticated") && attempt === 0) {
+      // Connect maps permission_denied to HTTP 403: the sign-in worked but the action is not allowed. That is a
+      // definite refusal (shown with its reason below), not an auth failure.
+      const authFailed = (res.status === 401 || res.status === 403 || data?.code === "unauthenticated") && data?.code !== "permission_denied";
+      if (authFailed && attempt === 0) {
         log("info", `${method}: ${res.status}, re-reading app credentials`);
         continue;
       }
-      if (res.status === 401 || res.status === 403 || data?.code === "unauthenticated") {
+      if (authFailed) {
         throw new GrokError("auth", "Cursor rejected the Grok Bot sign-in. Open the Grok Bot app and make sure you are signed in, then retry.", res.status);
       }
       const detail = shortDetail(data, res.statusText);

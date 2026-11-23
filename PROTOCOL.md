@@ -127,7 +127,8 @@ Failure modes:
 |---|---|---|
 | `listAgents` | `{}` | **array** of agents: `id, name, description` (= UI "Instructions"), `title, avatarShape, avatarColor, notifyOnUpdatesEnabled, isHiddenFromSidebar, isGroup, memberIds, harness, origin, createdAt, updatedAt, lastActivityAt, lastMessagePreview, isRunningTurn, hasUnread, unreadCount, awaitingUserResponse, …` |
 | `createAgent` | `{name, description, title?, avatarShape?, avatarColor?, origin:"user", clientNonce?}` (schema `Bl=I({...H7,`; `H7={name:f(),description:f(),title:_(f()),avatarShape:_(f()),avatarColor:_(f())}`) | `{agent}` or agent (gbot `unwrapOne`) — not live-tested |
-| `updateAgent` | `{id, profile:{name, description, title?, avatarShape?, avatarColor?}, editedFields?, serverHeldFields?, serverSavedAtMs?}` (search `updateAgent:C().args(`) | not live-tested; gbot re-lists to verify |
+| `updateAgent` | `{id, profile:{name, description, title?, avatarShape?, avatarColor?}, editedFields?, serverHeldFields?, serverSavedAtMs?}` (search `updateAgent:C().args(`; profile schema `Tye=I(H7)`) | `{}` **[live]**. For server-run bots a write without `serverHeldFields` is mirror-only and is often refused or re-synced (§5) |
+| `deleteAgents` | `{ids: [agentId]}` | `{}` **[live]**; drops the mirror after api2 `DeleteGrokBotAgent` |
 | `setAgentNotifyOnUpdates` | `{id, isEnabled}` | gbot `updateAgent` |
 | `setAgentHiddenFromSidebar` | `{id, isHidden}` | gbot `updateAgent` |
 | `getAgentTranscriptTail` | `{id, limit, beforeSeq?}` (schema `pye=I({id:W(),beforeSeq:_(se()),limit:se(),…`) | `{entries[], nextBeforeSeq?, precedingTimestampMs?}`; ascending by `seq`; `beforeSeq` exclusive; `nextBeforeSeq` = oldest returned seq, absent when no older entries |
@@ -143,6 +144,8 @@ Common: `kind, id, timestampMs, seq, requestId?`.
 - `kind:"send-message"`, `message:{type:"text",content}` — bot replies; `message.type` also `widget{prompt,options}`, `connector{connector}`.
 - `kind:"event"`, `event:{type,action,…}`; `kind:"notice"`, `text`; `kind:"feedback"` (UI-only).
 
+Box `listAgents` `updatedAt` equals `lastActivityAt` **[live]**: it is last activity, not the last profile edit.
+
 ## 5. Server-run ("temporal") bots **[live]**
 Bots with `harness:"temporal"` run on Cursor's servers. The app talks to them through api2 `aiserver.v1.GrokBotService`,
 not the box. The box refuses some of these calls: `createAgent` gives 500 `[permission_denied] A Sand box session is not
@@ -156,11 +159,30 @@ AppleWebKit/537.36 (KHTML, like Gecko) Sand/<ver> Safari/537.36`, `x-cursor-clie
 | RPC | Request | Reply |
 |---|---|---|
 | `CreateGrokBotTemporalAgent` | `{agentId (= clientNonce, a UUID), name, description, title, avatarShape, avatarColor, harness:"GROK_BOT_AGENT_HARNESS_KIND_TEMPORAL", kickstartRequested:false, introductionSuppressed:true}` | `{agent: GrokBotAgent}` |
-| `ListGrokBotAgents` | `{}` | `{agents: GrokBotAgent[], truncated?}`. `agent.agentId` is the bot id; `agent.id` is a server row id. |
-| `DeleteGrokBotAgent` | `{id: agentId}` | `{}`. The app then sends box `deleteAgents {ids}` to drop the box's mirror. |
+| `ListGrokBotAgents` | `{}` | `{agents: GrokBotAgent[], truncated?}`. `agent.agentId` is the bot id; `agent.id` is a server row id (e.g. `"28922618"`). Other fields **[live]**: `name, description` (= instructions), `title, avatarShape, avatarColor, harness, createdAtMs, updatedAtMs` (int64 strings; `updatedAtMs` = last profile write), `viewerIsOwner?`, `origin`. Descriptor `return["GrokBotAgent\|` in proto.cjs. |
+| `UpdateGrokBotAgent` | `{id: <server row id>, partialUpdate: true, name?, description?, title?, avatarShape?, avatarColor?}` (`UpdateGrokBotAgentRequest\|1 id 9\|2 name 9?\|3 description 9?\|4 title 9?\|5 avatar_shape 9?\|6 avatar_color 9?\|…\|9 partial_update 8?`) | `{agent: GrokBotAgent}` with the new `updatedAtMs` **[live]** |
+| `DeleteGrokBotAgent` | `{id: agentId}` | `{}` **[live]**. The app treats `not_found` as already deleted (`function Oet(`), then sends box `deleteAgents {ids}` to drop the box's mirror. |
+| `ListGrokBotAgentRoutines` | `{agentId, timeZone (IANA)}` (app: `rte.list`) | `{routines: GrokBotAgentRoutine[], routinePolicy?}` **[live]**: `automationId, routineId, name, triggerDescription, triggerPresentationJson, schedule, isEnabled, nextRunAtMs?, createdAtMs, runAs*, recordJson?`. `recordJson` is the box `automation.json`: `{id, name, prompt, trigger:{type:"cron", schedule:"CRON_TZ=… …", firesAt (cron string), window:{earlyMinutes, lateMinutes}, timing:"flexible"}, schedule, triggerDescription, isEnabled, createdAt, filePath, nextRunAt?, delivery, runs:[{id, startedAt, finishedAt?, status: ok\|error\|running, reportedOutcome?{kind, reason}}]}`. App validator `function dln(`; run labels in `chunk-bot-manage-automation-drilldown-*.js`. |
 | `SendGrokBotUserMessage` | `{agentId, messageId (= clientNonce, deduped), text, sentAtMs (int64 string), isFork:false, attachmentPaths:[], attachmentNames:[], source:"GROK_BOT_CLIENT_SURFACE_DESKTOP", initiator:"GROK_BOT_USER_MESSAGE_INITIATOR_USER", sendSource:"GROK_BOT_SEND_SOURCE_CHAT"}` plus headers `x-cursor-timezone: <IANA>` and `x-cursor-client-capabilities: grok-bot-email-offer-card` | `{dispatched, delivery: GROK_BOT_USER_MESSAGE_DELIVERY_{ACCEPTED_BOX,ACCEPTED_TEMPORAL,DUPLICATE,REFUSED}, refusal?{failureCode,message}}` |
 | `GetGrokBotSendStatus` | `{agentId, messageId}` | `{status: GROK_BOT_SEND_STATUS_{NOT_FOUND,ACCEPTED,REJECTED,PENDING,UNKNOWN_DURABILITY}, echoEntryId?, rejectionCode?}` |
 | `ListGrokBotTranscriptEntries` | `{agentId, limit, beforeSeq? (int64 string, exclusive)}` | `{entries:[{seq (string), entryKind, body (base64 of the box-format entry JSON, without seq), entryId, updatedSeq, blobHash?, bodyOmitted?}]}`, newest first |
 
 The box roster mirrors server-run bots, but with a lag in both directions: a new bot can take a while to appear and a
 deleted one can linger. The server roster is authoritative.
+
+### Editing server-run bots **[live, 2026-11-23, throwaway bots]**
+- The server copy is authoritative. Every chat turn and routine run reads it when it starts; a run already in progress
+  keeps the text it started with. Box-only `updateAgent` writes never reach a run, and the mirror later re-syncs over them.
+- The app's save path (renderer `function CVr(` picks `serverId` only for owned temporal bots; save `et`/`tt`; main-app.cjs
+  `updateIdentity`): api2 `UpdateGrokBotAgent {id: serverId, …changed, partialUpdate:true}` first, then box
+  `updateAgent {id, profile, editedFields, serverHeldFields: <fields the server took>, serverSavedAtMs: agent.updatedAtMs}`.
+  `BUr=new Set(["description","title"])`: the app never lets these fall back to a box-only write. With
+  `serverHeldFields` the mirror takes the values at once (`mirrorInSync` true right after).
+- The server stores text exactly, Unicode included; the mirror trims trailing newlines (418 vs 417 chars observed).
+- **Title folding:** for server-run bots, a title in `CreateGrokBotTemporalAgent` or `UpdateGrokBotAgent` is appended to
+  the name (`"Name · Title"`) and the title stays empty. There is no separate title.
+- App limits (renderer `Fu=2e4`, `ace()`): instructions are cut to 20,000 chars, name and title to 255.
+- Errors: Connect `permission_denied` arrives as HTTP 403 with `{code:"permission_denied"}`; it is a refusal, not an
+  expired sign-in.
+- Not documented by xAI/Cursor: personal Bots no longer show the description in the app, and the supported way to
+  change it is chat (the bot's `UpdateProfile` tool). `UpdateGrokBotAgent` is an internal app endpoint and may change.

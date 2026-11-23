@@ -3,6 +3,13 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- README: Claude Desktop config and log locations for current Microsoft Store versions
+  (`%LOCALAPPDATA%\Claude-Data\claude_<id>\` and `%LOCALAPPDATA%\Claude\Logs`). The agent install prompt now checks
+  every known config location.
+
 ## [0.2.0] - 2026-11-23
 
 ### Added
@@ -40,6 +47,7 @@ All notable changes to this project are documented here. The format follows
 
 - First release: status, list, get, create, update, history, send and usage tools for Grok Bots.
 
+[Unreleased]: https://github.com/0xJonty/grokbot-mcp/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/0xJonty/grokbot-mcp/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/0xJonty/grokbot-mcp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/0xJonty/grokbot-mcp/releases/tag/v0.1.0

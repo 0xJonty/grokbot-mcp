@@ -54,9 +54,16 @@ Open **Settings → Developer → Edit Config** and add this to `mcpServers`, ke
 }
 ```
 
-The config file is `%APPDATA%\Claude\claude_desktop_config.json`. If Claude Desktop came from the Microsoft Store,
-it is `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\claude_desktop_config.json`. Fully quit Claude
-Desktop (including the tray icon) and reopen it after editing.
+**Edit Config** always opens the right file. Where it lives depends on how Claude Desktop was installed:
+
+| Install | Config file |
+|---|---|
+| Standard installer | `%APPDATA%\Claude\claude_desktop_config.json` |
+| Microsoft Store, current versions | `%LOCALAPPDATA%\Claude-Data\claude_<id>\claude_desktop_config.json` |
+| Microsoft Store, older versions | `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\claude_desktop_config.json` |
+
+If more than one exists, the most recently modified is the live one. Fully quit Claude Desktop (including the tray
+icon) and reopen it after editing.
 
 ### Claude Code
 
@@ -130,11 +137,13 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed.
   token (see DECISIONS.md).
 - **"cloud computer unreachable after 90s"**: the box failed to wake. Retry, or open the app.
 - **"Delivery … unknown"**: check `grokbot_history` before you resend.
-- **Tools don't appear**: check Claude Desktop's MCP log (`mcp*.log` in `%APPDATA%\Claude\logs`, or under
-  `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\logs` for the Microsoft Store version).
-- **Logs**: written to stderr and to `%LOCALAPPDATA%\grokbot-mcp\log.txt`, which rotates at 256 KB. When Claude
-  Desktop is the Microsoft Store version, Windows redirects that file to
-  `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\grokbot-mcp\log.txt`. Tokens are never logged.
+- **Tools don't appear**: check Claude Desktop's log for the server, `mcp-server-grokbot.log` (named after the
+  config key or extension). It is in `%LOCALAPPDATA%\Claude\Logs` for current Microsoft Store versions, or
+  `%APPDATA%\Claude\logs` for the installer version. A healthy start ends with `grokbot-mcp <version> ready (stdio)`.
+- **Logs**: the server writes to stderr (which ends up in the log above) and to `%LOCALAPPDATA%\grokbot-mcp\log.txt`,
+  which rotates at 256 KB. Some Microsoft Store versions of Claude Desktop make Windows redirect that file to
+  `%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Local\grokbot-mcp\log.txt`; check there if the first is
+  missing or stale. Tokens are never logged.
 - **Smoke test** (read-only; previews only, never creates, edits or sends). Set `GROKBOT_MCP_BIN` to test an
   installed copy instead of `dist/`:
   - Windows: `node scripts\smoke.mjs`
@@ -153,9 +162,10 @@ Install the grokbot-mcp MCP server from https://github.com/0xJonty/grokbot-mcp f
    - Claude Desktop is installed, and the Grok Bot extension (.mcpb) is NOT already installed in it.
 2. Clone the repo to a working folder, then run `npm ci` and `npm run deploy`. Note the path it prints
    (normally %USERPROFILE%\grokbot-mcp\grokbot-mcp.mjs).
-3. Find claude_desktop_config.json: %APPDATA%\Claude\claude_desktop_config.json, or for the Microsoft Store version
-   %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude_desktop_config.json. Back it up, then MERGE
-   (never overwrite other servers) this entry into "mcpServers":
+3. Find claude_desktop_config.json. Check, in order: %APPDATA%\Claude\, %LOCALAPPDATA%\Claude-Data\claude_*\ and
+   %LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\. If more than one exists, use the most recently
+   modified; if none exists, ask me to open Claude Desktop > Settings > Developer > Edit Config once and retry.
+   Back it up, then MERGE (never overwrite other servers) this entry into "mcpServers":
    "grokbot": { "command": "<absolute path to node.exe>", "args": ["<path printed by npm run deploy>"] }
    Use real absolute paths and keep the JSON valid.
 4. Run the read-only smoke test: set GROKBOT_MCP_BIN to the deployed file and run `node scripts/smoke.mjs`.

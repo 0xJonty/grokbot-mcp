@@ -335,9 +335,10 @@ function validateCreate(input: CreateInput) {
   checkAvatar("color", input.avatarColor);
 }
 
-export function formatBotFull(b: Bot): string {
-  return JSON.stringify(
-    {
+/** The grokbot_get_bot payload (also its structuredContent). Undefined fields are dropped. */
+export function botFull(b: Bot): Record<string, unknown> {
+  return JSON.parse(
+    JSON.stringify({
       id: b.id,
       name: b.name,
       title: b.title,
@@ -353,8 +354,10 @@ export function formatBotFull(b: Bot): string {
       updatedAt: b.updatedAt,
       etag: etagOf(b),
       instructions: b.instructions,
-    },
-    null,
-    1,
+    }),
   );
+}
+
+export function formatBotFull(b: Bot): string {
+  return JSON.stringify(botFull(b), null, 1);
 }

@@ -3,6 +3,8 @@ import { routeFingerprint } from "../src/session.ts";
 import { Transport } from "../src/transport.ts";
 
 process.env.GROKBOT_MCP_TEST = "1";
+// Fixtures assert Sydney wall-clock dates; pin the display zone so tests pass on any machine/CI.
+process.env.GROKBOT_TZ = "Australia/Sydney";
 
 export const SECRET_ACCESS = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.SECRETSIGNATUREvalue1234567890";
 

@@ -14,7 +14,7 @@ export function redact(input: unknown): string {
 }
 
 function logFilePath(): string | null {
-  if (process.env.GROKBOT_MCP_LOG === "0") return null;
+  if (/^(0|false|no|off)$/i.test((process.env.GROKBOT_MCP_LOG ?? "").trim())) return null;
   const base = process.env.LOCALAPPDATA;
   if (!base || process.platform !== "win32") return process.env.GROKBOT_MCP_LOG_FILE || null;
   return process.env.GROKBOT_MCP_LOG_FILE || path.join(base, "grokbot-mcp", "log.txt");
@@ -41,9 +41,14 @@ function writeFile(line: string): void {
 
 export type Level = "debug" | "info" | "warn" | "error";
 
+/** "1"/"true"/"yes"/"on" = on. Unset, "", "0", "false" = off (MCPB user_config passes "false"). */
+export function envFlag(v: string | undefined): boolean {
+  return /^(1|true|yes|on)$/i.test((v ?? "").trim());
+}
+
 /** Logs go to stderr (and the optional file), never stdout. `file:false` keeps startup disk-free. */
 export function log(level: Level, msg: string, opts: { file?: boolean } = {}): void {
-  if (level === "debug" && !process.env.GROKBOT_MCP_DEBUG) return;
+  if (level === "debug" && !envFlag(process.env.GROKBOT_MCP_DEBUG)) return;
   const line = `${new Date().toISOString()} ${level} ${redact(msg)}`;
   try {
     process.stderr.write(line + "\n");

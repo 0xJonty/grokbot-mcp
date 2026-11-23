@@ -63,3 +63,25 @@
 20. **Client identity matches the app** (user-agent `Sand/<ver>`, `x-cursor-client-os`, `x-cursor-client-source`). The
     version comes from `desktop-status.json`, then from package.json inside the installed `app.asar` (read in place),
     and only as a last resort from a constant. It follows app updates without a code change.
+21. **Times use the system time zone**, or `GROKBOT_TZ` (IANA name) if set and valid. It was hardcoded to
+    Australia/Sydney, which is wrong for anyone else. An invalid `GROKBOT_TZ` falls back to the system zone and
+    `grokbot_status` says so; a blank value or an unsubstituted MCPB placeholder (`${user_config.timezone}`) counts as
+    unset. Every time shown is labelled with the zone. Tests pin `GROKBOT_TZ=Australia/Sydney` so fixtures are stable.
+22. **One-click install is an MCP Bundle** (`mcpb/manifest.json`, `npm run bundle`, attached to GitHub Releases).
+    Claude Desktop ships Node, so bundle users need no Node, git or config editing. `platforms: ["win32"]` because
+    credentials are unwrapped with Windows DPAPI. `user_config` exposes only time zone and debug logging. The mcpb CLI
+    is pinned and run with `npx` instead of being a devDependency: its own dependency tree has open advisories that
+    would otherwise show in every contributor's `npm audit`, and it never ships in the bundle.
+23. **Tool metadata follows the MCP spec guidance**: every tool has a `title`, read-only tools say so, every
+    free-form parameter has a short description, and the server sends short `instructions` (preview-then-confirm,
+    etag, never resend). Descriptions stay terse because tool definitions are paid for on every turn.
+24. **Input bounds are generous sanity limits** (name/title ≤200, instructions ≤200k, message ≤100k, blank message
+    rejected). The app bundle publishes no limits, so these only stop empty or runaway input before any network call;
+    `bots.ts` still does the semantic checks.
+25. **Only `grokbot_get_bot` declares an `outputSchema`** and returns `structuredContent` (plus the same JSON as text
+    for older clients). The other tools return compact text written for the model; schemas for them would add tokens
+    without helping it.
+26. **Protocol revision 2026-07-28 (stateless core, `server/discover`) is deferred.** The newest stable TypeScript SDK
+    (1.32.2) negotiates up to 2025-11-25 and handles older clients. Revisit when the SDK ships the new revision.
+27. **Deploy is a Node script** (`scripts/deploy.mjs`) so it works from plain Windows as well as WSL. From WSL it
+    asks Windows for `%USERPROFILE%` instead of assuming the WSL user name matches. `deploy.sh` just calls it.

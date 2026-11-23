@@ -1,5 +1,5 @@
 import { errorText } from "./errors.ts";
-import { relative, sydney } from "./time.ts";
+import { localTime, relative, timeZone, timeZoneOverrideInvalid } from "./time.ts";
 import type { Transport } from "./transport.ts";
 
 function maskEmail(e?: string): string | undefined {
@@ -45,6 +45,7 @@ export async function status(t: Transport, version: string): Promise<string> {
       out.push(`Box: unknown — ${errorText(err)}`);
     }
   }
-  out.push(`Route: ${t.hasRoute() ? "fresh route cached" : "none cached"}${t.lastWakeAt ? `, last wake ${sydney(t.lastWakeAt)}` : ""}`);
+  out.push(`Route: ${t.hasRoute() ? "fresh route cached" : "none cached"}${t.lastWakeAt ? `, last wake ${localTime(t.lastWakeAt)}` : ""}`);
+  out.push(`Times: ${timeZone()}${timeZoneOverrideInvalid() ? " (GROKBOT_TZ is not a valid IANA zone; using the system zone)" : ""}`);
   return out.join("\n");
 }

@@ -1,19 +1,37 @@
 {
   "name": "grokbot-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
-  "description": "MCP server for managing Grok Bot agents from Claude Desktop",
+  "description": "Unofficial MCP server for managing Grok Bots from Claude Desktop and Claude Code (Windows)",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "grok",
+    "grok-bot",
+    "mcpb"
+  ],
+  "author": "Jonty Atkinson (https://github.com/0xJonty)",
+  "homepage": "https://github.com/0xJonty/grokbot-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xJonty/grokbot-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0xJonty/grokbot-mcp/issues"
+  },
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=24"
+    "node": ">=22.6"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --experimental-strip-types test/*.test.ts",
     "smoke": "node scripts/smoke.mjs",
-    "deploy": "sh scripts/deploy.sh"
+    "deploy": "node scripts/deploy.mjs",
+    "bundle": "node scripts/pack-mcpb.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",

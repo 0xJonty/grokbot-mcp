@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { GrokError } from "./errors.ts";
-import { sydney } from "./time.ts";
+import { localTime, timeZone } from "./time.ts";
 import { resolveBot, type Bot, type Bots } from "./bots.ts";
 import { log } from "./log.ts";
 import type { Transport } from "./transport.ts";
@@ -176,11 +176,11 @@ export async function history(t: Transport, bots: Bots, ref: string, opts: Histo
 
   const max = opts.full ? Infinity : 500;
   const head = [
-    `${bot.isGroup ? "Group" : "Bot"}: ${bot.name} (${bot.id}) — ${lines.length} entries, newest last, times Australia/Sydney.`,
+    `${bot.isGroup ? "Group" : "Bot"}: ${bot.name} (${bot.id}) — ${lines.length} entries, newest last, times ${timeZone()}.`,
     older !== undefined ? `Older: before=${older}` : "Older: none",
     newer !== undefined ? `Newer: after=${newer}${moreNewer ? " (more newer entries exist)" : ""}` : "",
   ].filter(Boolean);
-  const body = lines.map((l) => `[${sydney(l.ts)}] ${l.role} (#${l.seq}): ${truncate(l.text, max)}`);
+  const body = lines.map((l) => `[${localTime(l.ts)}] ${l.role} (#${l.seq}): ${truncate(l.text, max)}`);
   return [...head, "", ...(body.length ? body : ["(no messages)"])].join("\n");
 }
 
@@ -232,7 +232,7 @@ async function sendViaBox(t: Transport, bot: Bot, message: string, clientNonce: 
     }
     throw err;
   }
-  const sentAt = sydney(Date.now());
+  const sentAt = localTime(Date.now());
   let entryId = typeof data?.messageId === "string" ? data.messageId : undefined;
   const found = await findSent(t, bot, clientNonce, entryId);
   entryId = entryId ?? found.entryId;
@@ -262,7 +262,7 @@ async function sendViaServer(t: Transport, bot: Bot, message: string, clientNonc
     initiator: "GROK_BOT_USER_MESSAGE_INITIATOR_USER",
     sendSource: "GROK_BOT_SEND_SOURCE_CHAT",
   };
-  const sentAt = sydney(Date.now());
+  const sentAt = localTime(Date.now());
   const receipt = (delivery: Receipt["delivery"], entryId?: string, seq?: number): Receipt => ({ delivery, bot: bot.name, botId: bot.id, harness, endpoint, entryId, seq, clientNonce, sentAt });
 
   let data: any;

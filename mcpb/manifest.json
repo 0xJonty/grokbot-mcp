@@ -1,0 +1,67 @@
+{
+  "manifest_version": "0.3",
+  "name": "grokbot-mcp",
+  "display_name": "Grok Bot",
+  "version": "0.2.0",
+  "description": "Manage your Grok Bots from Claude: list, read, create, edit, message, check usage.",
+  "long_description": "Unofficial. Uses the signed-in **Grok Bot** Windows desktop app session, so no tokens are copied or configured. Wakes the bot's cloud computer when it is asleep. Writes are two-step (preview, then confirm), edits are guarded by an etag, and messages are never resent automatically. There is no delete tool.\n\nRequires the Grok Bot desktop app installed and signed in on this Windows PC. Not affiliated with xAI, Cursor or Anthropic; it talks to private APIs that can change without notice.",
+  "author": {
+    "name": "Jonty Atkinson",
+    "url": "https://github.com/0xJonty"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xJonty/grokbot-mcp.git"
+  },
+  "homepage": "https://github.com/0xJonty/grokbot-mcp",
+  "documentation": "https://github.com/0xJonty/grokbot-mcp#readme",
+  "support": "https://github.com/0xJonty/grokbot-mcp/issues",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "server/grokbot-mcp.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/grokbot-mcp.mjs"],
+      "env": {
+        "GROKBOT_TZ": "${user_config.timezone}",
+        "GROKBOT_MCP_DEBUG": "${user_config.debug}"
+      }
+    }
+  },
+  "tools": [
+    { "name": "grokbot_status", "description": "Grok Bot health: app, sign-in, box awake/asleep." },
+    { "name": "grokbot_list_bots", "description": "List Grok bots (id, name, instructions preview)." },
+    { "name": "grokbot_get_bot", "description": "Full bot config incl. instructions and etag (needed for update)." },
+    { "name": "grokbot_create_bot", "description": "Create a bot. confirm=false (default) previews only." },
+    { "name": "grokbot_update_bot", "description": "Edit bot fields. Needs etag from grokbot_get_bot. confirm=false (default) shows a diff only." },
+    { "name": "grokbot_history", "description": "Bot chat history, newest last. Cursors: before/after = entry # from a previous result." },
+    { "name": "grokbot_send", "description": "Send a message to a bot. Returns a delivery receipt; never auto-resent." },
+    { "name": "grokbot_usage", "description": "Grok usage used/limit and reset time." }
+  ],
+  "keywords": ["grok", "grok bot", "cursor", "agents", "bots"],
+  "license": "MIT",
+  "privacy_policies": ["https://cursor.com/privacy"],
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "node": ">=22.0.0"
+    }
+  },
+  "user_config": {
+    "timezone": {
+      "type": "string",
+      "title": "Time zone",
+      "description": "IANA time zone for times shown in history and receipts, e.g. Europe/London. Leave blank to use this PC's time zone.",
+      "default": "",
+      "required": false
+    },
+    "debug": {
+      "type": "boolean",
+      "title": "Debug logging",
+      "description": "Write extra detail to the log file. Tokens are never logged.",
+      "default": false,
+      "required": false
+    }
+  }
+}

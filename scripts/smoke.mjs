@@ -1,6 +1,7 @@
 // Smoke test: spawn dist/grokbot-mcp.mjs over stdio with this node, list tools, call READ-ONLY tools.
-// Run with Windows node from WSL:
-//   "/mnt/c/Program Files/nodejs/node.exe" "$(wslpath -w scripts/smoke.mjs)" [botName]
+// On Windows:   node scripts\smoke.mjs [botName]
+// From WSL:     "/mnt/c/Program Files/nodejs/node.exe" "$(wslpath -w scripts/smoke.mjs)" [botName]
+// GROKBOT_MCP_BIN picks a different server file (e.g. the deployed copy or an unpacked .mcpb).
 // Never performs live create/update/send (previews only, confirm=false).
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -56,6 +57,10 @@ const results = [];
 async function call(name, args = {}, show = (t) => t) {
   const t0 = Date.now();
   const r = await rpc("tools/call", { name, arguments: args });
+  if (name === "grokbot_get_bot" && !r.result?.isError && !r.result?.structuredContent) {
+    console.error("get_bot: structuredContent missing");
+    process.exitCode = 1;
+  }
   const ms = Date.now() - t0;
   const text = r.result?.content?.map((c) => c.text).join("\n") ?? JSON.stringify(r.error);
   const ok = !r.error && !r.result?.isError;
@@ -68,6 +73,10 @@ async function call(name, args = {}, show = (t) => t) {
 const t0 = Date.now();
 const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "smoke", version: "0" } }, 15_000);
 console.log(`initialize: ${init.result?.serverInfo?.name} ${init.result?.serverInfo?.version} in ${Date.now() - t0}ms`);
+if (!init.result?.instructions) {
+  console.error("initialize: server instructions missing");
+  process.exitCode = 1;
+}
 child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
 const tools = await rpc("tools/list", {});
 const names = tools.result.tools.map((t) => t.name);

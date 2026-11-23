@@ -117,7 +117,7 @@ Failure modes:
 - **Sleeping box** → `417`, headers `x-anyrun-error-source: anyrun-proxy`, `x-anyrun-failure-reason: pod_hibernated`,
   empty body **[live]** (gbot `gatewayCall` handles only this, only for read methods). App failure vocabulary
   (search `P8t=["refused","dns","timeout"`): `refused, dns, timeout, network, no_storage, access_denied,
-  box_blocked, http_5xx, pod_hibernated`. Proxy also returns 404 "could not be routed" for dead routes (SPEC).
+  box_blocked, http_5xx, pod_hibernated`. Proxy also returns 404 "could not be routed" for dead routes (reported by earlier MCPs; treated as a route failure).
 - **Unknown method** → `404 {"error":"unknown gateway method: X","failureCode":"gateway/unknown-method"}` **[live]** — not a route failure.
 - First call right after wake can 500 transiently **[live]**; retry.
 - Unknown agent id on reads → `200 {"entries":[]}` **[live]**.

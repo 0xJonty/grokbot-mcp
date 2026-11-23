@@ -1,4 +1,4 @@
-import { relative, sydney } from "./time.ts";
+import { localTime, relative, timeZone } from "./time.ts";
 import type { Bots } from "./bots.ts";
 import type { Transport } from "./transport.ts";
 
@@ -22,7 +22,7 @@ export async function usage(t: Transport, bots: Bots): Promise<string> {
   );
   const resetMs = Date.parse(status.nextResetTimestampUtc ?? "");
   const startMs = Date.parse(status.currentPeriodStart ?? "");
-  if (Number.isFinite(resetMs)) out.push(`Period: ${sydney(startMs)} → resets ${sydney(resetMs)} Sydney (${relative(resetMs, now)})`);
+  if (Number.isFinite(resetMs)) out.push(`Period: ${localTime(startMs)} → resets ${localTime(resetMs)} ${timeZone()} (${relative(resetMs, now)})`);
   const extra = status.additionalUsageLimit;
   if (extra && !/NONE$/.test(String(extra.state ?? "")) && (Number(extra.limitCents) > 0 || Number(extra.spentCents) > 0)) {
     const c = (v: unknown) => (v == null ? "?" : `$${(Number(v) / 100).toFixed(2)}`);

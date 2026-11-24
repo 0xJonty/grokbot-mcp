@@ -9,6 +9,7 @@ import { status } from "./status.ts";
 import { timeZone } from "./time.ts";
 import type { Transport } from "./transport.ts";
 import { usage } from "./usage.ts";
+import { WAIT_DEFAULT_SEC, waitBudgetMs, waitFor } from "./wait.ts";
 
 type Result = { content: { type: "text"; text: string }[]; structuredContent?: Record<string, unknown>; isError?: boolean };
 type Output = string | { text: string; structured: Record<string, unknown> };
@@ -37,6 +38,7 @@ const shape = z.enum(AVATAR_SHAPES).optional();
 const color = z.enum(AVATAR_COLORS).optional();
 const name = z.string().min(1).max(MAX_NAME);
 const title = z.string().max(MAX_NAME).describe("Subtitle under the name (box-run bots only)");
+const waitSec = z.number().int().min(0).max(3600).default(0).describe("After sending, wait up to this many seconds for the reply (0 = don't wait)");
 const instructions = z.string().max(200_000).describe(`Bot instructions (hidden description), max ${MAX_INSTRUCTIONS} chars`);
 
 // Shape of grokbot_get_bot's structuredContent (mirrors botFull in bots.ts).
@@ -68,6 +70,7 @@ export const SERVER_INSTRUCTIONS =
   "create_bot and update_bot are two-step: call with confirm=false to preview, show the user, then confirm=true. " +
   "update_bot needs the etag from a fresh grokbot_get_bot. " +
   "grokbot_send is never retried automatically: if delivery is unknown, check grokbot_history before sending again. " +
+  "To get a bot's reply, call grokbot_wait (it returns the moment the bot finishes) instead of sleeping and polling history. " +
   "delete_bot also needs confirmName = the exact bot name. " +
   "There is no tool for approvals, memory or routine edits: do those through the bot or the Grok Bot app.";
 
@@ -222,19 +225,50 @@ export function registerTools(server: McpServer, t: Transport, version: string):
     "grokbot_send",
     {
       title: "Send message",
-      description: "Send a message to a bot. Returns a delivery receipt; never auto-resent.",
-      inputSchema: { bot, message: z.string().min(1).max(100_000).refine((m) => m.trim().length > 0, "Message is empty").describe("Message text") },
+      description: "Send a message to a bot. Returns a delivery receipt; never auto-resent. waitSec>0 also waits for the reply.",
+      inputSchema: {
+        bot,
+        message: z.string().min(1).max(100_000).refine((m) => m.trim().length > 0, "Message is empty").describe("Message text"),
+        waitSec,
+      },
       annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    (a) =>
+    (a, extra) =>
       run("send", async () => {
+        const t0 = t.clock();
         const r = await send(t, bots, a.bot, a.message);
         const id = r.entryId ? `entry ${r.entryId}${r.seq !== undefined ? ` (#${r.seq})` : ""}` : "entry id not yet visible";
         const after = r.seq !== undefined ? ` after=${r.seq}` : "";
-        if (r.delivery === "accepted") return `Delivered to "${r.bot}" at ${r.sentAt} ${timeZone()} — ${id}. Read replies with grokbot_history${after}.`;
-        if (r.delivery === "pending") return `Accepted by the server for "${r.bot}" at ${r.sentAt} ${timeZone()}, still pending (${id}). Check grokbot_history${after}; do not resend.`;
-        return `Sent to "${r.bot}" at ${r.sentAt} ${timeZone()} but receipt not confirmed (${id}). Check grokbot_history before resending.`;
+        let text: string;
+        if (r.delivery === "accepted") text = `Delivered to "${r.bot}" at ${r.sentAt} ${timeZone()} — ${id}. Get the reply with grokbot_wait${after}.`;
+        else if (r.delivery === "pending") text = `Accepted by the server for "${r.bot}" at ${r.sentAt} ${timeZone()}, still pending (${id}). Get the reply with grokbot_wait${after}; do not resend.`;
+        else return `Sent to "${r.bot}" at ${r.sentAt} ${timeZone()} but receipt not confirmed (${id}). Check grokbot_history before resending.`;
+        if (!a.waitSec) return text;
+        // The wait shares the call's budget with the send. A wait failure never hides the receipt.
+        const left = Math.floor((waitBudgetMs(a.waitSec) - (t.clock() - t0)) / 1000);
+        if (left < 1) return `${text}\nNo time left to wait in this call.`;
+        try {
+          return `${text}\n\n${await waitFor(t, bots, r.botId, { after: r.seq, timeoutSec: left, signal: extra.signal })}`;
+        } catch (err) {
+          return `${text}\nWait failed: ${errorText(err)} Use grokbot_wait.`;
+        }
       }),
+  );
+
+  server.registerTool(
+    "grokbot_wait",
+    {
+      title: "Wait for bot",
+      description: `Block until a bot finishes its turn, then return its new messages. Returns within ${WAIT_DEFAULT_SEC}s by default; if still working, call again.`,
+      inputSchema: {
+        bot,
+        after: z.number().int().min(0).optional().describe("Entry # to read after (from grokbot_send); default: your last send"),
+        timeoutSec: z.number().int().min(1).max(3600).optional().describe(`Max seconds to block (default ${WAIT_DEFAULT_SEC}; server caps it, Claude Desktop ends calls at 60)`),
+        full: z.boolean().default(false).describe("Untruncated text"),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: true },
+    },
+    (a, extra) => run("wait", () => waitFor(t, bots, a.bot, { after: a.after, timeoutSec: a.timeoutSec, full: a.full, signal: extra.signal })),
   );
 
   server.registerTool(

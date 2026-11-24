@@ -38,7 +38,8 @@
     { "name": "grokbot_delete_bot", "description": "Permanently delete a bot. confirm=false (default) previews; confirm=true also needs confirmName." },
     { "name": "grokbot_history", "description": "Bot chat history, newest last. Cursors: before/after = entry # from a previous result." },
     { "name": "grokbot_routines", "description": "A bot's routines: schedule, next run, prompt, last 5 runs. Read-only." },
-    { "name": "grokbot_send", "description": "Send a message to a bot. Returns a delivery receipt; never auto-resent." },
+    { "name": "grokbot_send", "description": "Send a message to a bot. Returns a delivery receipt; never auto-resent. waitSec>0 also waits for the reply." },
+    { "name": "grokbot_wait", "description": "Block until a bot finishes its turn, then return its new messages. Returns within 45s by default; if still working, call again." },
     { "name": "grokbot_usage", "description": "Grok usage used/limit and reset time." }
   ],
   "keywords": ["grok", "grok bot", "cursor", "agents", "bots"],

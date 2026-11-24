@@ -142,3 +142,28 @@
     feed), and the minimum version and maximum age come from a Statsig dynamic config (`sand_min_client_version`).
     Neither is readable cheaply without the network, so this is skipped, as the brief allowed.
 39. **No other new write tools** (memory, routines, approvals). The docs offer no supported API for them.
+40. **`grokbot_wait` is a bounded long-poll, not an open-ended block.** Requested: a tool that sleeps the chat until the
+    bot finishes, instead of the model sleeping and re-reading history. Evidence from Claude Desktop 6.28899 (extracted
+    `app.asar`): local MCP tool calls use the SDK default timeout of 60 s (`r?.timeout??6e4`), `resetTimeoutOnProgress`
+    is off (so progress notifications do not extend it), and `mcpToolTimeoutSec` is a managed setting for third-party
+    deployments only. MCP tasks (`onTask`) are only wired for cowork-remote bridge sessions. So one call blocks for at
+    most `GROKBOT_WAIT_MAX_SEC` (default 50, default argument 45) and the model calls again while the bot works.
+    The poll runs in this process every 2 s and costs no model tokens.
+    - Live state: api2 `GrokBotService/ListGrokBotAgentStatuses {agentIds}` → `statuses[{agentId, isRunning, live?,
+      client?}]`. Read-only probe 2026-11-24: idle bots return only `client` (`lastActivityAtMs`, `lastEntryId`, …).
+      `live` (`GrokBotAgentLiveState`: `isRunning, isComposingMessage, awaiting, activity, hasRunningSubagents,
+      updatedAtMs, staleAfterMs, lastTurnSettlement{turnId, outcome: success|error|cancelled, settledAtMs,
+      clientNonce}`) is taken from the proto descriptor and the app's use of it; not yet seen live while running.
+      "Working" follows the app (renderer `zu`): running or composing, unless awaiting the user; stale live state is ignored.
+      If the RPC fails, the box `listAgents` row (`isRunningTurn`, `awaitingUserResponse`) is used for the rest of the call.
+    - Race after a send: the turn takes a moment to start, so "not running" right after our own send does not count.
+      The server remembers its last send per bot (nonce, seq, time; memory only). It returns "finished" once the turn
+      was seen running, a settlement matches our nonce (or, without a nonce, settled after the send), or a bot entry
+      after our message is in the transcript (a fast turn between polls). The transcript is only read on the first
+      poll and when `client.lastActivityAtMs` moves. With no send on record, an idle bot returns at once.
+    - "Still working" and "not started" answers are one line with no entries, so repeated calls stay cheap; the final
+      answer carries all entries after `after`.
+    - `WatchGrokBotTranscripts` (server-streaming; frames for rows, agent state, turn failed) would push changes with
+      no poll delay. Not used: it needs a Connect streaming client, and a 2 s poll is enough within a 45 s call.
+    - `grokbot_send(waitSec)` saves one model turn per message. The wait shares the call's budget and its failure is
+      appended to the receipt, never thrown, so a delivered message is never reported as failed.

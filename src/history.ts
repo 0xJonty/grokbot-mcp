@@ -109,7 +109,7 @@ async function serverTail(t: Transport, id: string, limit: number, beforeSeq?: n
 }
 
 /** Transcript page (oldest first). Server-run bots are read from api2 like the app; the box mirror is a fallback. */
-async function tail(t: Transport, bot: Bot, limit: number, beforeSeq?: number): Promise<{ entries: any[]; nextBeforeSeq?: number }> {
+export async function tail(t: Transport, bot: Bot, limit: number, beforeSeq?: number): Promise<{ entries: any[]; nextBeforeSeq?: number }> {
   const n = Math.min(PAGE_MAX, Math.max(1, limit));
   if (!runsOnServer(bot)) return boxTail(t, bot.id, n, beforeSeq);
   try {
@@ -130,7 +130,11 @@ export interface HistoryOpts {
 
 export async function history(t: Transport, bots: Bots, ref: string, opts: HistoryOpts): Promise<string> {
   const list = await bots.list();
-  const bot = resolveBot(list, ref);
+  return historyOf(t, resolveBot(list, ref), list, opts);
+}
+
+/** History for an already resolved bot; `list` supplies member names for group chats. */
+export async function historyOf(t: Transport, bot: Bot, list: Bot[], opts: HistoryOpts): Promise<string> {
   const names = new Map(list.map((b) => [b.id, b.name]));
   const limit = Math.min(100, Math.max(1, Math.trunc(opts.limit ?? 20)));
   if (opts.before !== undefined && opts.after !== undefined) throw new GrokError("invalid", "Use before or after, not both.");
@@ -204,11 +208,39 @@ function withRoute(err: unknown, endpoint: string, harness: string): unknown {
   return new GrokError(err.code, `${err.message} [endpoint: ${endpoint}; harness: ${harness}]`, err.status);
 }
 
+/** The last message this server sent to a bot, so grokbot_wait can tell "not started yet" from "finished". */
+export interface SentRecord {
+  nonce: string;
+  seq?: number;
+  atMs: number;
+  /** Seen running (or settled) since the send. */
+  started: boolean;
+  /** Seen finished since the send. */
+  done: boolean;
+}
+
+const lastSent = new Map<string, SentRecord>();
+
+export function lastSentTo(botId: string): SentRecord | undefined {
+  return lastSent.get(botId);
+}
+
+export function forgetSent(): void {
+  lastSent.clear();
+}
+
 export async function send(t: Transport, bots: Bots, ref: string, message: string): Promise<Receipt> {
   if (!message?.trim()) throw new GrokError("invalid", "Message is empty.");
   const bot = await bots.resolve(ref);
   const clientNonce = crypto.randomUUID();
   const harness = bot.harness ?? "unknown";
+  const atMs = t.clock();
+  const r = await sendRoute(t, bot, message, clientNonce, harness);
+  lastSent.set(bot.id, { nonce: clientNonce, seq: r.seq, atMs, started: false, done: false });
+  return r;
+}
+
+async function sendRoute(t: Transport, bot: Bot, message: string, clientNonce: string, harness: string): Promise<Receipt> {
   if (runsOnServer(bot)) return sendViaServer(t, bot, message, clientNonce, harness);
   try {
     return await sendViaBox(t, bot, message, clientNonce, harness);

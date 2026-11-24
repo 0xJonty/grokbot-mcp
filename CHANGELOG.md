@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `grokbot_wait` (read-only): blocks until a bot finishes its turn, then returns its new messages. It replaces
+  "sleep, then check `grokbot_history`": the server checks the bot's live state every 2 seconds (no Claude usage) and
+  returns the moment the turn ends, the bot asks a question, or the turn fails. One call returns within 45 seconds by
+  default (Claude Desktop ends local MCP tool calls at 60 seconds); if the bot is still working, Claude calls again.
+- `grokbot_send` takes `waitSec`: send, then wait for the reply, in one call. A failed wait never hides the receipt.
+- `GROKBOT_WAIT_MAX_SEC` raises the per-call cap for clients with longer tool timeouts.
+
+### Changed
+- Send receipts now point to `grokbot_wait` instead of `grokbot_history`.
+
 ## [0.3.0] - 2026-11-23
 
 ### Fixed

@@ -98,6 +98,7 @@ All settings are optional environment variables.
 | `GROKBOT_MCP_LOG_FILE` | Log file path. Default: `%LOCALAPPDATA%\grokbot-mcp\log.txt`. |
 | `GROKBOT_APPDATA_DIR` | Grok Bot app data folder, if not `%APPDATA%\Grok Bot`. |
 | `GROKBOT_APP_ASAR` | The app's `app.asar`, if the app is not installed in the default place. |
+| `GROKBOT_WAIT_MAX_SEC` | Longest one `grokbot_wait` call may block. Default `50`, because Claude Desktop ends a local MCP tool call after 60 seconds. Raise it (up to `3600`) only for a client with a longer tool timeout. |
 
 ## Tools
 
@@ -111,7 +112,8 @@ All settings are optional environment variables.
 | `grokbot_delete_bot` | Deletes a bot permanently. With `confirm=false` (the default) it only shows a preview; `confirm=true` also needs `confirmName` set to the bot's exact name. |
 | `grokbot_history` | Shows chat history, newest last, in your time zone. Text is cut to 500 chars unless `full=true`. Use `before=`/`after=` with the entry numbers from a previous result to page. |
 | `grokbot_routines` | Read-only. Shows a bot's routines: schedule, timing window, next run, the routine prompt and the last 5 runs (failed runs are not retried, and rate-limit failures are flagged). |
-| `grokbot_send` | Sends one message and returns a delivery receipt. It is never resent automatically. |
+| `grokbot_send` | Sends one message and returns a delivery receipt. It is never resent automatically. With `waitSec` above 0 it then waits for the reply in the same call, like `grokbot_wait`. |
+| `grokbot_wait` | Read-only. Blocks until the bot finishes its turn, then returns what it wrote. It returns as soon as the bot stops working, or asks a question, or after `timeoutSec` (default 45). If the bot is still working it says so, and Claude calls it again. The server checks the bot every 2 seconds, which costs no Claude usage. Use it instead of sleeping and re-reading `grokbot_history`. |
 | `grokbot_usage` | Shows how much of the weekly Grok usage is used, when it resets, and a breakdown by source and by bot. |
 
 `bot` takes an id or an exact name (case-insensitive). There are no tools for approvals, memory or editing

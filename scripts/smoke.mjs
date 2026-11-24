@@ -100,6 +100,8 @@ if (target) {
   const clip = (t) => t.split("\n").map((l) => (l.length > 160 ? l.slice(0, 160) + "…" : l)).join("\n");
   await call("grokbot_history", { bot: target, limit: 5 }, clip);
   await call("grokbot_routines", { bot: target }, clip);
+  // Read-only: nothing was sent from this process, so an idle bot returns at once; a busy one blocks up to 10s.
+  await call("grokbot_wait", { bot: target, timeoutSec: 10 }, clip);
   await call("grokbot_delete_bot", { bot: target, confirm: false });
   if (got.ok) {
     const { etag, name } = JSON.parse(got.text);

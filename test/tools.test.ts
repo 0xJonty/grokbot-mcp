@@ -45,7 +45,7 @@ test("tools/list: every tool has a title, annotations and described params; matc
     }
   }
   const ro = tools.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort();
-  assert.deepEqual(ro, ["grokbot_get_bot", "grokbot_history", "grokbot_list_bots", "grokbot_routines", "grokbot_status", "grokbot_usage"]);
+  assert.deepEqual(ro, ["grokbot_get_bot", "grokbot_history", "grokbot_list_bots", "grokbot_routines", "grokbot_status", "grokbot_usage", "grokbot_wait"]);
   assert.equal(client.getInstructions(), SERVER_INSTRUCTIONS);
   assert.equal(client.getServerVersion()?.title, "Grok Bot");
 });

@@ -303,6 +303,11 @@ export class Transport {
     return this.sleep(ms);
   }
 
+  /** Current time from the injected clock. */
+  clock(): number {
+    return this.now();
+  }
+
   hasRoute(): boolean {
     return !!this.route && (!this.route.expiresAtMs || this.route.expiresAtMs > this.now());
   }
